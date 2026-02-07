@@ -66,6 +66,20 @@ class LibraryStore {
     await save();
   }
 
+  Future<void> deleteFolderAndBooks(String folderId) async {
+    final toDelete =
+        _state.books.where((book) => book.folderId == folderId).toList();
+    for (final book in toDelete) {
+      final file = File(book.path);
+      if (await file.exists()) {
+        await file.delete();
+      }
+      _state.books.remove(book);
+    }
+    _state.folders.removeWhere((folder) => folder.id == folderId);
+    await save();
+  }
+
   Future<void> moveBook(String bookId, String? folderId) async {
     final book = _state.books.firstWhere((book) => book.id == bookId);
     book.folderId = folderId;

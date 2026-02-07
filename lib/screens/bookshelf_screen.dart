@@ -148,6 +148,45 @@ class _BookshelfScreenState extends State<BookshelfScreen>
     setState(() {});
   }
 
+  Future<void> _deleteFolder(Folder folder) async {
+    final count = _store.state.books
+        .where((book) => book.folderId == folder.id)
+        .length;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              title: Text('仅删除文件夹（移出 $count 本图书）'),
+              onTap: () => Navigator.pop(context, 'keep'),
+            ),
+            ListTile(
+              title: Text('删除文件夹并移除 $count 本图书'),
+              onTap: () => Navigator.pop(context, 'delete'),
+            ),
+            ListTile(
+              title: const Text('取消'),
+              onTap: () => Navigator.pop(context),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (choice == null) return;
+    if (choice == 'keep') {
+      await _store.deleteFolder(folder.id);
+    } else if (choice == 'delete') {
+      await _store.deleteFolderAndBooks(folder.id);
+      if (_selectedFolderId == folder.id) {
+        _selectedFolderId = null;
+      }
+    }
+    if (!mounted) return;
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -219,6 +258,7 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                             books: folderBooks.take(4).toList(),
                             onTap: () =>
                                 setState(() => _selectedFolderId = folder.id),
+                            onLongPress: () => _deleteFolder(folder),
                           );
                         },
                         childCount: folders.length,
@@ -428,16 +468,19 @@ class _FolderTile extends StatelessWidget {
     required this.folder,
     required this.books,
     required this.onTap,
+    required this.onLongPress,
   });
 
   final Folder folder;
   final List<Book> books;
   final VoidCallback onTap;
+  final VoidCallback onLongPress;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
