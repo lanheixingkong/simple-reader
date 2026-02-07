@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -29,6 +30,7 @@ class LibraryStore {
     }
     _dataFile = File(p.join(docsDir.path, 'library.json'));
     await load();
+    await _ensureHashes();
     await importFromInbox();
     _initialized = true;
   }
@@ -109,16 +111,40 @@ class LibraryStore {
     await save();
   }
 
+  Future<void> _ensureHashes() async {
+    var changed = false;
+    for (final book in _state.books) {
+      if (book.hash != null) continue;
+      final file = File(book.path);
+      if (!await file.exists()) continue;
+      book.hash = await _hashFile(file);
+      changed = true;
+    }
+    if (changed) {
+      await save();
+    }
+  }
+
   Future<List<Book>> importFiles(List<String> filePaths,
       {String? folderId}) async {
     final imported = <Book>[];
+    final existingHashes = _state.books
+        .map((book) => book.hash)
+        .whereType<String>()
+        .toSet();
     for (final path in filePaths) {
       final format = BookFormatX.fromPath(path);
       if (format == null) continue;
+      final sourceFile = File(path);
+      if (!await sourceFile.exists()) continue;
+      final fileHash = await _hashFile(sourceFile);
+      if (existingHashes.contains(fileHash)) {
+        continue;
+      }
       final baseName = p.basename(path);
       final targetName = '${DateTime.now().millisecondsSinceEpoch}_$baseName';
       final targetPath = p.join(_booksDir.path, targetName);
-      await File(path).copy(targetPath);
+      await sourceFile.copy(targetPath);
       final book = Book(
         id: DateTime.now().microsecondsSinceEpoch.toString(),
         title: p.basenameWithoutExtension(baseName),
@@ -126,8 +152,10 @@ class LibraryStore {
         format: format,
         addedAt: DateTime.now().millisecondsSinceEpoch,
         folderId: folderId,
+        hash: fileHash,
       );
       _state.books.add(book);
+      existingHashes.add(fileHash);
       imported.add(book);
     }
     if (imported.isNotEmpty) {
@@ -160,5 +188,10 @@ class LibraryStore {
       await save();
     }
     return imported;
+  }
+
+  Future<String> _hashFile(File file) async {
+    final digest = await sha1.bind(file.openRead()).first;
+    return digest.toString();
   }
 }
