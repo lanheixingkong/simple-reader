@@ -26,7 +26,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   ReaderSettings? _settings;
   PdfControllerPinch? _controller;
   Timer? _saveTimer;
-  bool _showChrome = false;
+  final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
 
   @override
   void initState() {
@@ -39,6 +39,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     _saveProgress();
     _controller?.dispose();
     _saveTimer?.cancel();
+    _showChrome.dispose();
     super.dispose();
   }
 
@@ -100,7 +101,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
-      showAppBar: _showChrome,
+      showAppBarListenable: _showChrome,
       actions: [
         IconButton(
           onPressed: _openSettings,
@@ -110,7 +111,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       ],
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onTap: () => setState(() => _showChrome = !_showChrome),
+        onTap: () => _showChrome.value = !_showChrome.value,
         child: controller == null
             ? const Center(child: CircularProgressIndicator())
             : PdfViewPinch(

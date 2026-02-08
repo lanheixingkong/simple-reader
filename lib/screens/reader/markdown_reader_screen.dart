@@ -27,7 +27,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
   ScrollController? _scrollController;
   String _content = '';
   Timer? _saveTimer;
-  bool _showChrome = false;
+  final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
 
   @override
   void initState() {
@@ -40,6 +40,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
     _saveProgress();
     _scrollController?.dispose();
     _saveTimer?.cancel();
+    _showChrome.dispose();
     super.dispose();
   }
 
@@ -101,7 +102,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
-      showAppBar: _showChrome,
+      showAppBarListenable: _showChrome,
       actions: [
         IconButton(
           onPressed: _openSettings,
@@ -111,7 +112,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
       ],
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onTap: () => setState(() => _showChrome = !_showChrome),
+        onTap: () => _showChrome.value = !_showChrome.value,
         child: Markdown(
           data: _content,
           controller: _scrollController,

@@ -28,7 +28,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   PageController? _pageController;
   int _currentPage = 0;
   Timer? _saveTimer;
-  bool _showChrome = false;
+  final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
 
   @override
   void initState() {
@@ -41,6 +41,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
     _saveProgress();
     _pageController?.dispose();
     _saveTimer?.cancel();
+    _showChrome.dispose();
     super.dispose();
   }
 
@@ -120,7 +121,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
-      showAppBar: _showChrome,
+      showAppBarListenable: _showChrome,
       actions: [
         IconButton(
           onPressed: _openSettings,
@@ -130,7 +131,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
       ],
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onTap: () => setState(() => _showChrome = !_showChrome),
+        onTap: () => _showChrome.value = !_showChrome.value,
         child: _pages.isEmpty
             ? const Center(child: CircularProgressIndicator())
             : PageView.builder(

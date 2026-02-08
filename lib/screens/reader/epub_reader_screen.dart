@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:epubx/epubx.dart' show EpubBookRef, EpubChapterRef, EpubReader;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
@@ -34,7 +35,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   final Map<String, String> _imageCache = {};
   final Map<String, Future<String>> _chapterHtmlCache = {};
   Timer? _saveTimer;
-  bool _showChrome = false;
+  final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _pageScrollEnabled = ValueNotifier<bool>(true);
+  late final ScrollPhysics _pagePhysics = _ToggleableScrollPhysics(
+    _pageScrollEnabled,
+    parent: const PageScrollPhysics(),
+  );
 
   @override
   void initState() {
@@ -47,6 +53,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
     _saveProgress();
     _pageController?.dispose();
     _saveTimer?.cancel();
+    _showChrome.dispose();
+    _pageScrollEnabled.dispose();
     super.dispose();
   }
 
@@ -138,7 +146,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
-      showAppBar: _showChrome,
+      showAppBarListenable: _showChrome,
       actions: [
         IconButton(
           onPressed: _openToc,
@@ -153,11 +161,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
       ],
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onTap: () => setState(() => _showChrome = !_showChrome),
+        onTap: () => _showChrome.value = !_showChrome.value,
         child: _chapters.isEmpty
             ? const Center(child: CircularProgressIndicator())
             : PageView.builder(
                 controller: _pageController,
+                physics: _pagePhysics,
                 onPageChanged: (index) {
                   _currentChapter = index;
                   _warmChapter(index);
@@ -204,12 +213,25 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
             height: 1.6,
           ),
         );
-        return SingleChildScrollView(
-          key: PageStorageKey('epub-chapter-${chapter.cacheKey}'),
-          padding: const EdgeInsets.all(16),
-          child: Theme(
-            data: baseTheme.copyWith(textTheme: updatedTextTheme),
-            child: _buildHtmlWidget(html, settings),
+        return NotificationListener<ScrollNotification>(
+          onNotification: (notification) {
+            if (notification.metrics.axis != Axis.vertical) {
+              return false;
+            }
+            if (notification is ScrollStartNotification) {
+              _setPageScrollEnabled(false);
+            } else if (notification is ScrollEndNotification) {
+              _setPageScrollEnabled(true);
+            }
+            return false;
+          },
+          child: SingleChildScrollView(
+            key: PageStorageKey('epub-chapter-${chapter.cacheKey}'),
+            padding: const EdgeInsets.all(16),
+            child: Theme(
+              data: baseTheme.copyWith(textTheme: updatedTextTheme),
+              child: _buildHtmlWidget(html, settings),
+            ),
           ),
         );
       },
@@ -234,6 +256,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
               child: Image.memory(
                 block.imageBytes!,
                 fit: BoxFit.contain,
+                gaplessPlayback: true,
               ),
             )
           else if (block.text != null && block.text!.trim().isNotEmpty)
@@ -335,6 +358,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
         () => _buildChapterHtml(bookRef, settings, chapter),
       );
     }
+  }
+
+  void _setPageScrollEnabled(bool enabled) {
+    if (_pageScrollEnabled.value == enabled) return;
+    _pageScrollEnabled.value = enabled;
   }
 
   List<_EpubChapterEntry> _flattenChapters(List<EpubChapterRef> roots) {
@@ -524,4 +552,40 @@ class _HtmlBlock {
 
   final String? text;
   final Uint8List? imageBytes;
+}
+
+class _ToggleableScrollPhysics extends ScrollPhysics {
+  const _ToggleableScrollPhysics(this.enabledListenable, {ScrollPhysics? parent})
+      : super(parent: parent);
+
+  final ValueListenable<bool> enabledListenable;
+
+  bool get _enabled => enabledListenable.value;
+
+  @override
+  _ToggleableScrollPhysics applyTo(ScrollPhysics? ancestor) {
+    return _ToggleableScrollPhysics(
+      enabledListenable,
+      parent: buildParent(ancestor),
+    );
+  }
+
+  @override
+  bool shouldAcceptUserOffset(ScrollMetrics position) {
+    if (!_enabled) return false;
+    return super.shouldAcceptUserOffset(position);
+  }
+
+  @override
+  double applyPhysicsToUserOffset(ScrollMetrics position, double offset) {
+    if (!_enabled) return 0.0;
+    return super.applyPhysicsToUserOffset(position, offset);
+  }
+
+  @override
+  Simulation? createBallisticSimulation(
+      ScrollMetrics position, double velocity) {
+    if (!_enabled) return null;
+    return super.createBallisticSimulation(position, velocity);
+  }
 }

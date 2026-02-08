@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../models/library.dart';
@@ -10,14 +11,14 @@ class ReaderLayout extends StatelessWidget {
     required this.settings,
     required this.child,
     this.actions = const [],
-    this.showAppBar = true,
+    required this.showAppBarListenable,
   });
 
   final Book book;
   final ReaderSettings settings;
   final Widget child;
   final List<Widget> actions;
-  final bool showAppBar;
+  final ValueListenable<bool> showAppBarListenable;
 
   @override
   Widget build(BuildContext context) {
@@ -40,29 +41,34 @@ class ReaderLayout extends StatelessWidget {
             right: 0,
             child: SafeArea(
               bottom: false,
-              child: IgnorePointer(
-                ignoring: !showAppBar,
-                child: AnimatedOpacity(
-                  duration: const Duration(milliseconds: 180),
-                  opacity: showAppBar ? 1 : 0,
-                  child: AnimatedSlide(
-                    duration: const Duration(milliseconds: 180),
-                    offset: showAppBar ? Offset.zero : const Offset(0, -0.1),
-                    child: SizedBox(
-                      height: kToolbarHeight,
-                      child: AppBar(
-                        title: Text(book.title),
-                        actions: actions,
-                        backgroundColor: appBarBackground,
-                        foregroundColor: appBarForeground,
-                        iconTheme: IconThemeData(color: appBarForeground),
-                        actionsIconTheme:
-                            IconThemeData(color: appBarForeground),
-                        elevation: 2,
+              child: ValueListenableBuilder<bool>(
+                valueListenable: showAppBarListenable,
+                builder: (context, showAppBar, _) {
+                  return IgnorePointer(
+                    ignoring: !showAppBar,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: showAppBar ? 1 : 0,
+                      child: AnimatedSlide(
+                        duration: const Duration(milliseconds: 180),
+                        offset: showAppBar ? Offset.zero : const Offset(0, -0.1),
+                        child: SizedBox(
+                          height: kToolbarHeight,
+                          child: AppBar(
+                            title: Text(book.title),
+                            actions: actions,
+                            backgroundColor: appBarBackground,
+                            foregroundColor: appBarForeground,
+                            iconTheme: IconThemeData(color: appBarForeground),
+                            actionsIconTheme:
+                                IconThemeData(color: appBarForeground),
+                            elevation: 2,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             ),
           ),
