@@ -26,6 +26,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   ReaderSettings? _settings;
   PdfControllerPinch? _controller;
   Timer? _saveTimer;
+  bool _showChrome = false;
 
   @override
   void initState() {
@@ -99,6 +100,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
+      showAppBar: _showChrome,
       actions: [
         IconButton(
           onPressed: _openSettings,
@@ -106,11 +108,15 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           tooltip: '阅读设置',
         ),
       ],
-      child: controller == null
-          ? const Center(child: CircularProgressIndicator())
-          : PdfViewPinch(
-              controller: controller,
-            ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() => _showChrome = !_showChrome),
+        child: controller == null
+            ? const Center(child: CircularProgressIndicator())
+            : PdfViewPinch(
+                controller: controller,
+              ),
+      ),
     );
   }
 }

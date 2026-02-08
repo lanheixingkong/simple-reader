@@ -34,6 +34,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   final Map<String, String> _imageCache = {};
   final Map<String, Future<String>> _chapterHtmlCache = {};
   Timer? _saveTimer;
+  bool _showChrome = false;
 
   @override
   void initState() {
@@ -137,6 +138,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
+      showAppBar: _showChrome,
       actions: [
         IconButton(
           onPressed: _openToc,
@@ -149,18 +151,22 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
           tooltip: '阅读设置',
         ),
       ],
-      child: _chapters.isEmpty
-          ? const Center(child: CircularProgressIndicator())
-          : PageView.builder(
-              controller: _pageController,
-              onPageChanged: (index) {
-                _currentChapter = index;
-                _warmChapter(index);
-              },
-              itemCount: _chapters.length,
-              itemBuilder: (context, index) =>
-                  _buildChapterPage(context, bookRef, settings, index),
-            ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() => _showChrome = !_showChrome),
+        child: _chapters.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : PageView.builder(
+                controller: _pageController,
+                onPageChanged: (index) {
+                  _currentChapter = index;
+                  _warmChapter(index);
+                },
+                itemCount: _chapters.length,
+                itemBuilder: (context, index) =>
+                    _buildChapterPage(context, bookRef, settings, index),
+              ),
+      ),
     );
   }
 

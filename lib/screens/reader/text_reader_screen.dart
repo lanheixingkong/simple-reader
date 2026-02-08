@@ -28,6 +28,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   PageController? _pageController;
   int _currentPage = 0;
   Timer? _saveTimer;
+  bool _showChrome = false;
 
   @override
   void initState() {
@@ -119,6 +120,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
+      showAppBar: _showChrome,
       actions: [
         IconButton(
           onPressed: _openSettings,
@@ -126,24 +128,28 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
           tooltip: '阅读设置',
         ),
       ],
-      child: _pages.isEmpty
-          ? const Center(child: CircularProgressIndicator())
-          : PageView.builder(
-              controller: _pageController,
-              onPageChanged: (index) => _currentPage = index,
-              itemCount: _pages.length,
-              itemBuilder: (context, index) => Padding(
-                padding: const EdgeInsets.all(16),
-                child: Text(
-                  _pages[index],
-                  style: TextStyle(
-                    fontSize: settings.fontSize,
-                    color: foreground,
-                    height: 1.6,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() => _showChrome = !_showChrome),
+        child: _pages.isEmpty
+            ? const Center(child: CircularProgressIndicator())
+            : PageView.builder(
+                controller: _pageController,
+                onPageChanged: (index) => _currentPage = index,
+                itemCount: _pages.length,
+                itemBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    _pages[index],
+                    style: TextStyle(
+                      fontSize: settings.fontSize,
+                      color: foreground,
+                      height: 1.6,
+                    ),
                   ),
                 ),
               ),
-            ),
+      ),
     );
   }
 }

@@ -27,6 +27,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
   ScrollController? _scrollController;
   String _content = '';
   Timer? _saveTimer;
+  bool _showChrome = false;
 
   @override
   void initState() {
@@ -100,6 +101,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
     return ReaderLayout(
       book: widget.book,
       settings: settings,
+      showAppBar: _showChrome,
       actions: [
         IconButton(
           onPressed: _openSettings,
@@ -107,15 +109,19 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
           tooltip: '阅读设置',
         ),
       ],
-      child: Markdown(
-        data: _content,
-        controller: _scrollController,
-        padding: const EdgeInsets.all(16),
-        styleSheet: MarkdownStyleSheet(
-          p: TextStyle(
-            fontSize: settings.fontSize,
-            color: foreground,
-            height: 1.6,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: () => setState(() => _showChrome = !_showChrome),
+        child: Markdown(
+          data: _content,
+          controller: _scrollController,
+          padding: const EdgeInsets.all(16),
+          styleSheet: MarkdownStyleSheet(
+            p: TextStyle(
+              fontSize: settings.fontSize,
+              color: foreground,
+              height: 1.6,
+            ),
           ),
         ),
       ),
