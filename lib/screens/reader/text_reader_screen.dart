@@ -8,6 +8,7 @@ import '../../models/library.dart';
 import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
+import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
 
 class TextReaderScreen extends StatefulWidget {
@@ -29,6 +30,9 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   int _currentPage = 0;
   Timer? _saveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
+  String _selectedText = '';
+  Offset? _tapDownPosition;
+  DateTime? _tapDownTime;
 
   @override
   void initState() {
@@ -124,14 +128,25 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
       showAppBarListenable: _showChrome,
       actions: [
         IconButton(
+          onPressed: _shareCurrentPage,
+          icon: const Icon(Icons.ios_share),
+          tooltip: '分享',
+        ),
+        IconButton(
           onPressed: _openSettings,
           icon: const Icon(Icons.text_fields),
           tooltip: '阅读设置',
         ),
       ],
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.translucent,
-        onTap: () => _showChrome.value = !_showChrome.value,
+        onPointerDown: (event) {
+          _tapDownPosition = event.position;
+          _tapDownTime = DateTime.now();
+        },
+        onPointerUp: (event) {
+          _handleTapToggle(event.position);
+        },
         child: _pages.isEmpty
             ? const Center(child: CircularProgressIndicator())
             : PageView.builder(
@@ -140,17 +155,96 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
                 itemCount: _pages.length,
                 itemBuilder: (context, index) => Padding(
                   padding: const EdgeInsets.all(16),
-                  child: Text(
-                    _pages[index],
-                    style: TextStyle(
-                      fontSize: settings.fontSize,
-                      color: foreground,
-                      height: 1.6,
+                  child: SelectionArea(
+                    onSelectionChanged: (content) {
+                      _selectedText = content?.plainText.trim() ?? '';
+                    },
+                    contextMenuBuilder: (context, selectableRegionState) {
+                      final items = List<ContextMenuButtonItem>.from(
+                        selectableRegionState.contextMenuButtonItems ??
+                            const [],
+                      );
+                      final localizedItems =
+                          items.map(_localizedMenuItem).toList();
+                      localizedItems.add(
+                        ContextMenuButtonItem(
+                          label: '分享',
+                          onPressed: () {
+                            final text = _selectedText;
+                            selectableRegionState.hideToolbar();
+                            if (text.isEmpty) return;
+                            _openShareSheet(text, sourceLabel: '已选文字');
+                          },
+                        ),
+                      );
+                      return AdaptiveTextSelectionToolbar.buttonItems(
+                        anchors: selectableRegionState.contextMenuAnchors,
+                        buttonItems: localizedItems,
+                      );
+                    },
+                    child: Text(
+                      _pages[index],
+                      style: TextStyle(
+                        fontSize: settings.fontSize,
+                        color: foreground,
+                        height: 1.6,
+                      ),
                     ),
                   ),
                 ),
               ),
       ),
+    );
+  }
+
+  void _handleTapToggle(Offset upPosition) {
+    final downPosition = _tapDownPosition;
+    final downTime = _tapDownTime;
+    _tapDownPosition = null;
+    _tapDownTime = null;
+    if (downPosition == null || downTime == null) return;
+    final distance = (upPosition - downPosition).distance;
+    final elapsed = DateTime.now().difference(downTime);
+    if (distance <= 12 && elapsed.inMilliseconds <= 280) {
+      _showChrome.value = !_showChrome.value;
+    }
+  }
+
+  Future<void> _shareCurrentPage() async {
+    if (_pages.isEmpty) return;
+    final text = _pages[_currentPage].trim();
+    if (text.isEmpty) return;
+    await _openShareSheet(text, sourceLabel: '当前屏幕');
+  }
+
+  Future<void> _openShareSheet(String text,
+      {required String sourceLabel}) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => ReaderShareSheet(
+        title: widget.book.title,
+        author: '未知作者',
+        text: text,
+        sourceLabel: sourceLabel,
+      ),
+    );
+  }
+
+  ContextMenuButtonItem _localizedMenuItem(ContextMenuButtonItem item) {
+    final label = switch (item.type) {
+      ContextMenuButtonType.copy => '复制',
+      ContextMenuButtonType.selectAll => '全选',
+      ContextMenuButtonType.cut => '剪切',
+      ContextMenuButtonType.paste => '粘贴',
+      _ => item.label,
+    };
+    if (label == item.label) return item;
+    return ContextMenuButtonItem(
+      type: item.type,
+      label: label,
+      onPressed: item.onPressed,
     );
   }
 }

@@ -1,6 +1,10 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../models/library.dart';
 import '../../services/library_store.dart';
@@ -102,6 +106,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       showAppBarListenable: _showChrome,
       actions: [
         IconButton(
+          onPressed: _shareCurrentPage,
+          icon: const Icon(Icons.ios_share),
+          tooltip: '分享',
+        ),
+        IconButton(
           onPressed: _openSettings,
           icon: const Icon(Icons.text_fields),
           tooltip: '阅读设置',
@@ -117,5 +126,44 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
               ),
       ),
     );
+  }
+
+  Future<void> _shareCurrentPage() async {
+    final controller = _controller;
+    if (controller == null) return;
+    final pageNumber = controller.pageListenable.value;
+    if (pageNumber == null) return;
+    try {
+      final document = await controller.document;
+      final page = await document.getPage(pageNumber);
+      final targetWidth = 1080.0;
+      final targetHeight = page.height / page.width * targetWidth;
+      final image = await page.render(
+        width: targetWidth,
+        height: targetHeight,
+        format: PdfPageImageFormat.png,
+        backgroundColor: '#FFFFFF',
+        quality: 100,
+      );
+      await page.close();
+      if (image == null) return;
+      final dir = await getTemporaryDirectory();
+      final file = File(
+        p.join(
+          dir.path,
+          'reader-share-pdf-${DateTime.now().millisecondsSinceEpoch}.png',
+        ),
+      );
+      await file.writeAsBytes(image.bytes);
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: widget.book.title,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('生成分享图片失败')),
+      );
+    }
   }
 }

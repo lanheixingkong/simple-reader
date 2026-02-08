@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
@@ -11,6 +12,7 @@ import '../../models/library.dart';
 import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
+import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
 
 class MarkdownReaderScreen extends StatefulWidget {
@@ -30,12 +32,16 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   ReaderSettings? _settings;
   ScrollController? _scrollController;
   String _content = '';
+  String _plainText = '';
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   final List<_TocEntry> _toc = [];
   final List<GlobalKey> _headingKeys = [];
   int _headingKeyCursor = 0;
+  String _selectedText = '';
+  Offset? _tapDownPosition;
+  DateTime? _tapDownTime;
 
   @override
   void initState() {
@@ -68,6 +74,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     final settings = await _settingsStore.load();
     _settings = settings;
     _content = await File(widget.book.path).readAsString();
+    _plainText = _markdownToPlainText(_content);
     _buildToc(_content);
     _scrollController = ScrollController(
       initialScrollOffset: widget.book.lastOffset ?? 0,
@@ -250,38 +257,159 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
             tooltip: '目录',
           ),
         IconButton(
+          onPressed: _shareCurrentScreen,
+          icon: const Icon(Icons.ios_share),
+          tooltip: '分享',
+        ),
+        IconButton(
           onPressed: _openSettings,
           icon: const Icon(Icons.text_fields),
           tooltip: '阅读设置',
         ),
       ],
-      child: GestureDetector(
+      child: Listener(
         behavior: HitTestBehavior.translucent,
-        onTap: () => _showChrome.value = !_showChrome.value,
+        onPointerDown: (event) {
+          _tapDownPosition = event.position;
+          _tapDownTime = DateTime.now();
+        },
+        onPointerUp: (event) {
+          _handleTapToggle(event.position);
+        },
         child: SingleChildScrollView(
           controller: _scrollController,
           padding: const EdgeInsets.all(16),
-          child: MarkdownBody(
-            data: _content,
-            builders: {
-              'h1': _HeadingBuilder(_nextHeadingKey),
-              'h2': _HeadingBuilder(_nextHeadingKey),
-              'h3': _HeadingBuilder(_nextHeadingKey),
-              'h4': _HeadingBuilder(_nextHeadingKey),
-              'h5': _HeadingBuilder(_nextHeadingKey),
-              'h6': _HeadingBuilder(_nextHeadingKey),
+          child: SelectionArea(
+            onSelectionChanged: (content) {
+              _selectedText = content?.plainText.trim() ?? '';
             },
-            styleSheet: MarkdownStyleSheet(
-              p: TextStyle(
-                fontSize: settings.fontSize,
-                color: foreground,
-                height: 1.6,
+            contextMenuBuilder: (context, selectableRegionState) {
+              final items = List<ContextMenuButtonItem>.from(
+                selectableRegionState.contextMenuButtonItems ?? const [],
+              );
+              final localizedItems = items.map(_localizedMenuItem).toList();
+              localizedItems.add(
+                ContextMenuButtonItem(
+                  label: '分享',
+                  onPressed: () {
+                    final text = _selectedText;
+                    selectableRegionState.hideToolbar();
+                    if (text.isEmpty) return;
+                    _openShareSheet(text, sourceLabel: '已选文字');
+                  },
+                ),
+              );
+              return AdaptiveTextSelectionToolbar.buttonItems(
+                anchors: selectableRegionState.contextMenuAnchors,
+                buttonItems: localizedItems,
+              );
+            },
+            child: MarkdownBody(
+              data: _content,
+              builders: {
+                'h1': _HeadingBuilder(_nextHeadingKey),
+                'h2': _HeadingBuilder(_nextHeadingKey),
+                'h3': _HeadingBuilder(_nextHeadingKey),
+                'h4': _HeadingBuilder(_nextHeadingKey),
+                'h5': _HeadingBuilder(_nextHeadingKey),
+                'h6': _HeadingBuilder(_nextHeadingKey),
+              },
+              styleSheet: MarkdownStyleSheet(
+                p: TextStyle(
+                  fontSize: settings.fontSize,
+                  color: foreground,
+                  height: 1.6,
+                ),
               ),
             ),
           ),
         ),
       ),
     );
+  }
+
+  void _handleTapToggle(Offset upPosition) {
+    final downPosition = _tapDownPosition;
+    final downTime = _tapDownTime;
+    _tapDownPosition = null;
+    _tapDownTime = null;
+    if (downPosition == null || downTime == null) return;
+    final distance = (upPosition - downPosition).distance;
+    final elapsed = DateTime.now().difference(downTime);
+    if (distance <= 12 && elapsed.inMilliseconds <= 280) {
+      _showChrome.value = !_showChrome.value;
+    }
+  }
+
+  Future<void> _shareCurrentScreen() async {
+    final text = _estimateVisibleText();
+    if (text.trim().isEmpty) return;
+    await _openShareSheet(text, sourceLabel: '当前屏幕');
+  }
+
+  String _estimateVisibleText() {
+    if (_plainText.isEmpty) return '';
+    final controller = _scrollController;
+    if (controller == null || !controller.hasClients) {
+      return _plainText;
+    }
+    final settings = _settings;
+    if (settings == null) return _plainText;
+    final size = MediaQuery.of(context).size;
+    final factor = settings.fontSize * settings.fontSize * 1.4;
+    final charsPerScreen = math.max(
+      600,
+      math.min(2400, (size.width * size.height / factor).floor()),
+    );
+    final maxExtent = controller.position.maxScrollExtent;
+    final progress = maxExtent <= 0
+        ? 0.0
+        : (controller.offset / maxExtent).clamp(0.0, 1.0);
+    final start = (_plainText.length * progress).floor();
+    final end = (start + charsPerScreen).clamp(0, _plainText.length);
+    return _plainText.substring(start, end);
+  }
+
+  Future<void> _openShareSheet(String text,
+      {required String sourceLabel}) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => ReaderShareSheet(
+        title: widget.book.title,
+        author: '未知作者',
+        text: text,
+        sourceLabel: sourceLabel,
+      ),
+    );
+  }
+
+  ContextMenuButtonItem _localizedMenuItem(ContextMenuButtonItem item) {
+    final label = switch (item.type) {
+      ContextMenuButtonType.copy => '复制',
+      ContextMenuButtonType.selectAll => '全选',
+      ContextMenuButtonType.cut => '剪切',
+      ContextMenuButtonType.paste => '粘贴',
+      _ => item.label,
+    };
+    if (label == item.label) return item;
+    return ContextMenuButtonItem(
+      type: item.type,
+      label: label,
+      onPressed: item.onPressed,
+    );
+  }
+
+  String _markdownToPlainText(String content) {
+    var text = content;
+    text = text.replaceAll(RegExp(r'`{3}[^`]*`{3}', multiLine: true), ' ');
+    text = text.replaceAll(RegExp(r'`([^`]*)`'), r'$1');
+    text = text.replaceAll(RegExp(r'!\[[^\]]*\]\([^\)]*\)'), ' ');
+    text = text.replaceAll(RegExp(r'\[[^\]]*\]\([^\)]*\)'), ' ');
+    text = text.replaceAll(RegExp(r'[#>*_\\-]+'), ' ');
+    text = text.replaceAll(RegExp(r'\n{2,}'), '\n\n');
+    return text.trim();
   }
 }
 
