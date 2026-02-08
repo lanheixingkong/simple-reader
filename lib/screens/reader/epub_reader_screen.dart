@@ -367,6 +367,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   String _stripCss(String html) {
     var cleaned = html;
     cleaned = cleaned.replaceAll(
+      RegExp(r'<head[^>]*>[\s\S]*?<\/head>', caseSensitive: false),
+      '',
+    );
+    cleaned = cleaned.replaceAll(
       RegExp(r'<style[^>]*>[\s\S]*?<\/style>', caseSensitive: false),
       '',
     );
