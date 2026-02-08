@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:epubx/epubx.dart';
 import 'package:flutter/material.dart';
+import 'package:image/image.dart' as img;
 import 'package:pdfx/pdfx.dart';
 import 'package:path/path.dart' as p;
 
@@ -34,7 +35,8 @@ class CoverService {
       final bookRef = await EpubReader.openBook(await _readFile(path));
       final cover = await bookRef.readCover();
       if (cover != null) {
-        return Uint8List.fromList(cover.getBytes());
+        // readCover() returns decoded pixels; re-encode to a displayable image.
+        return Uint8List.fromList(img.encodeJpg(cover, quality: 90));
       }
 
       final manifestItems = bookRef.Schema?.Package?.Manifest?.Items ?? [];
