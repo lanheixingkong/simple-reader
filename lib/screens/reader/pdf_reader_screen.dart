@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:math';
-
 import 'package:flutter/material.dart';
 import 'package:pdfx/pdfx.dart';
 
@@ -24,7 +22,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   final _settingsStore = SettingsStore.instance;
 
   ReaderSettings? _settings;
-  PdfControllerPinch? _controller;
+  PdfController? _controller;
   Timer? _saveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
 
@@ -46,9 +44,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   Future<void> _load() async {
     final settings = await _settingsStore.load();
     _settings = settings;
-    _controller = PdfControllerPinch(
+    _controller = PdfController(
       document: PdfDocument.openFile(widget.book.path),
-      initialPage: max(1, widget.book.lastPage ?? 1),
+      initialPage: (widget.book.lastPage ?? 1).clamp(1, 999999),
     );
     if (mounted) {
       setState(() {});
@@ -114,7 +112,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
         onTap: () => _showChrome.value = !_showChrome.value,
         child: controller == null
             ? const Center(child: CircularProgressIndicator())
-            : PdfViewPinch(
+            : PdfView(
                 controller: controller,
               ),
       ),
