@@ -43,6 +43,8 @@ dependencies:
   pdfx: ^2.6.0
   shared_preferences: ^2.3.2
   crypto: ^3.0.7
+  share_plus: ^7.2.1
+  image_gallery_saver: ^2.0.3
 
 dev_dependencies:
   flutter_test:
