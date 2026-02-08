@@ -22,6 +22,8 @@ class ReaderLayout extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final background = SettingsStore.backgroundFor(settings.theme);
+    final appBarBackground = _appBarBackgroundFor(background);
+    final appBarForeground = _appBarForegroundFor(appBarBackground);
     return Scaffold(
       backgroundColor: background,
       body: Stack(
@@ -51,7 +53,11 @@ class ReaderLayout extends StatelessWidget {
                       child: AppBar(
                         title: Text(book.title),
                         actions: actions,
-                        backgroundColor: background.withOpacity(0.92),
+                        backgroundColor: appBarBackground,
+                        foregroundColor: appBarForeground,
+                        iconTheme: IconThemeData(color: appBarForeground),
+                        actionsIconTheme:
+                            IconThemeData(color: appBarForeground),
                         elevation: 2,
                       ),
                     ),
@@ -63,5 +69,21 @@ class ReaderLayout extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Color _appBarBackgroundFor(Color background) {
+    final luminance = background.computeLuminance();
+    if (luminance < 0.2) {
+      return Color.lerp(background, Colors.white, 0.08)!;
+    }
+    return Color.lerp(background, Colors.black, 0.06)!;
+  }
+
+  Color _appBarForegroundFor(Color background) {
+    final luminance = background.computeLuminance();
+    if (luminance < 0.2) {
+      return Colors.white.withOpacity(0.92);
+    }
+    return Colors.black.withOpacity(0.87);
   }
 }
