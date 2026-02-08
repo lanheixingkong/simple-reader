@@ -21,6 +21,8 @@ class _BookshelfScreenState extends State<BookshelfScreen>
   final _store = LibraryStore.instance;
   String? _selectedFolderId;
   bool _loading = true;
+  bool _selectionMode = false;
+  final Set<String> _selectedBookIds = {};
 
   @override
   void initState() {
@@ -97,7 +99,8 @@ class _BookshelfScreenState extends State<BookshelfScreen>
     setState(() {});
   }
 
-  Future<void> _moveBook(Book book) async {
+  Future<void> _moveSelectedBooks() async {
+    if (_selectedBookIds.isEmpty) return;
     final folderId = await showModalBottomSheet<String?>(
       context: context,
       builder: (context) {
@@ -119,17 +122,23 @@ class _BookshelfScreenState extends State<BookshelfScreen>
         );
       },
     );
-    await _store.moveBook(book.id, folderId);
+    for (final bookId in _selectedBookIds) {
+      await _store.moveBook(bookId, folderId);
+    }
     if (!mounted) return;
-    setState(() {});
+    setState(() {
+      _selectionMode = false;
+      _selectedBookIds.clear();
+    });
   }
 
-  Future<void> _deleteBook(Book book) async {
+  Future<void> _deleteSelectedBooks() async {
+    if (_selectedBookIds.isEmpty) return;
     final ok = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除书籍'),
-        content: Text('确定要删除《${book.title}》吗？'),
+        content: Text('确定要删除已选的 ${_selectedBookIds.length} 本书吗？'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -143,9 +152,56 @@ class _BookshelfScreenState extends State<BookshelfScreen>
       ),
     );
     if (ok != true) return;
-    await _store.deleteBook(book.id);
+    for (final bookId in _selectedBookIds) {
+      await _store.deleteBook(bookId);
+    }
     if (!mounted) return;
-    setState(() {});
+    setState(() {
+      _selectionMode = false;
+      _selectedBookIds.clear();
+    });
+  }
+
+  void _enterSelection(Book book) {
+    setState(() {
+      _selectionMode = true;
+      _selectedBookIds.add(book.id);
+    });
+  }
+
+  void _toggleSelection(Book book) {
+    setState(() {
+      if (_selectedBookIds.contains(book.id)) {
+        _selectedBookIds.remove(book.id);
+      } else {
+        _selectedBookIds.add(book.id);
+      }
+      if (_selectedBookIds.isEmpty) {
+        _selectionMode = false;
+      }
+    });
+  }
+
+  void _clearSelection() {
+    setState(() {
+      _selectionMode = false;
+      _selectedBookIds.clear();
+    });
+  }
+
+  void _selectAll(List<Book> books) {
+    if (books.isEmpty) return;
+    setState(() {
+      _selectionMode = true;
+      if (_selectedBookIds.length == books.length) {
+        _selectedBookIds.clear();
+        _selectionMode = false;
+      } else {
+        _selectedBookIds
+          ..clear()
+          ..addAll(books.map((book) => book.id));
+      }
+    });
   }
 
   Future<void> _deleteFolder(Folder folder) async {
@@ -205,28 +261,63 @@ class _BookshelfScreenState extends State<BookshelfScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_selectedFolderId == null
-            ? '书架'
-            : folders
-                .firstWhere((folder) => folder.id == _selectedFolderId)
-                .name),
-        leading: _selectedFolderId == null
-            ? null
-            : IconButton(
-                onPressed: () => setState(() => _selectedFolderId = null),
-                icon: const Icon(Icons.arrow_back),
-              ),
+        title: _selectionMode
+            ? Text('已选 ${_selectedBookIds.length} 本')
+            : Text(_selectedFolderId == null
+                ? '书架'
+                : folders
+                    .firstWhere((folder) => folder.id == _selectedFolderId)
+                    .name),
+        leading: _selectionMode
+            ? IconButton(
+                onPressed: _clearSelection,
+                icon: const Icon(Icons.close),
+                tooltip: '取消选择',
+              )
+            : _selectedFolderId == null
+                ? null
+                : IconButton(
+                    onPressed: () =>
+                        setState(() => _selectedFolderId = null),
+                    icon: const Icon(Icons.arrow_back),
+                  ),
         actions: [
-          IconButton(
-            onPressed: _createFolder,
-            icon: const Icon(Icons.create_new_folder_outlined),
-            tooltip: '新建文件夹',
-          ),
-          IconButton(
-            onPressed: _pickFiles,
-            icon: const Icon(Icons.add),
-            tooltip: '导入',
-          ),
+          if (_selectionMode) ...[
+            IconButton(
+              onPressed: _selectedBookIds.isEmpty ? null : _moveSelectedBooks,
+              icon: const Icon(Icons.drive_file_move_outlined),
+              tooltip: '移动',
+            ),
+            IconButton(
+              onPressed:
+                  _selectedBookIds.isEmpty ? null : _deleteSelectedBooks,
+              icon: const Icon(Icons.delete_outline),
+              tooltip: '删除',
+            ),
+            IconButton(
+              onPressed: books.isEmpty ? null : () => _selectAll(books),
+              icon: Icon(
+                _selectedBookIds.length == books.length && books.isNotEmpty
+                    ? Icons.remove_done
+                    : Icons.select_all,
+              ),
+              tooltip: _selectedBookIds.length == books.length &&
+                      books.isNotEmpty
+                  ? '取消全选'
+                  : '全选',
+            ),
+          ] else ...[
+            IconButton(
+              onPressed: _createFolder,
+              icon: const Icon(Icons.create_new_folder_outlined),
+              tooltip: '新建文件夹',
+            ),
+            IconButton(
+              onPressed: _pickFiles,
+              icon: const Icon(Icons.add),
+              tooltip: '导入',
+            ),
+          ],
         ],
       ),
       body: books.isEmpty && _selectedFolderId != null
@@ -286,8 +377,12 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                       delegate: SliverChildBuilderDelegate(
                         (context, index) {
                           final book = books[index];
+                          final selected =
+                              _selectedBookIds.contains(book.id);
                           return _BookTile(
                             book: book,
+                            selectionMode: _selectionMode,
+                            selected: selected,
                             onOpen: () {
                               Navigator.of(context).push(
                                 MaterialPageRoute(
@@ -295,8 +390,8 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                                 ),
                               );
                             },
-                            onMove: () => _moveBook(book),
-                            onDelete: () => _deleteBook(book),
+                            onEnterSelection: () => _enterSelection(book),
+                            onToggleSelection: () => _toggleSelection(book),
                           );
                         },
                         childCount: books.length,
@@ -345,51 +440,52 @@ class _EmptyState extends StatelessWidget {
 class _BookTile extends StatelessWidget {
   const _BookTile({
     required this.book,
+    required this.selectionMode,
+    required this.selected,
     required this.onOpen,
-    required this.onMove,
-    required this.onDelete,
+    required this.onEnterSelection,
+    required this.onToggleSelection,
   });
 
   final Book book;
+  final bool selectionMode;
+  final bool selected;
   final VoidCallback onOpen;
-  final VoidCallback onMove;
-  final VoidCallback onDelete;
+  final VoidCallback onEnterSelection;
+  final VoidCallback onToggleSelection;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: onOpen,
-      onLongPress: () {
-        showModalBottomSheet<void>(
-          context: context,
-          builder: (context) => SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                ListTile(
-                  title: const Text('移动到文件夹'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    onMove();
-                  },
-                ),
-                ListTile(
-                  title: const Text('删除'),
-                  onTap: () {
-                    Navigator.pop(context);
-                    onDelete();
-                  },
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      onTap: selectionMode ? onToggleSelection : onOpen,
+      onLongPress: selectionMode ? onToggleSelection : onEnterSelection,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: _BookCover(book: book),
+            child: Stack(
+              children: [
+                Positioned.fill(child: _BookCover(book: book)),
+                if (selectionMode)
+                  Positioned(
+                    top: 8,
+                    right: 8,
+                    child: Container(
+                      decoration: BoxDecoration(
+                        color:
+                            selected ? Colors.black87 : Colors.black45,
+                        shape: BoxShape.circle,
+                      ),
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(
+                        selected ? Icons.check : Icons.circle_outlined,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           const SizedBox(height: 8),
           Text(
