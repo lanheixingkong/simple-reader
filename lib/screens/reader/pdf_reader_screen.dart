@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -24,6 +25,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
   ReaderSettings? _settings;
   PdfControllerPinch? _controller;
+  Timer? _saveTimer;
 
   @override
   void initState() {
@@ -35,6 +37,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   void dispose() {
     _saveProgress();
     _controller?.dispose();
+    _saveTimer?.cancel();
     super.dispose();
   }
 
@@ -60,13 +63,28 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   void _openSettings() async {
     final settings = _settings;
     if (settings == null) return;
-    final updated = await showModalBottomSheet<ReaderSettings>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => ReaderSettingsSheet(settings: settings),
+      builder: (context) => ReaderSettingsSheet(
+        settings: settings,
+        onChanged: (updated) {
+          _applySettings(updated);
+        },
+      ),
     );
-    if (updated == null) return;
-    await _settingsStore.save(updated);
+  }
+
+  Future<void> _applySettings(ReaderSettings updated) async {
+    _scheduleSave(updated);
     setState(() => _settings = updated);
+  }
+
+  void _scheduleSave(ReaderSettings updated) {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(
+      const Duration(milliseconds: 300),
+      () => _settingsStore.save(updated),
+    );
   }
 
   @override

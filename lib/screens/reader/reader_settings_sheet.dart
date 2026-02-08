@@ -3,9 +3,14 @@ import 'package:flutter/material.dart';
 import '../../services/settings_store.dart';
 
 class ReaderSettingsSheet extends StatefulWidget {
-  const ReaderSettingsSheet({super.key, required this.settings});
+  const ReaderSettingsSheet({
+    super.key,
+    required this.settings,
+    this.onChanged,
+  });
 
   final ReaderSettings settings;
+  final ValueChanged<ReaderSettings>? onChanged;
 
   @override
   State<ReaderSettingsSheet> createState() => _ReaderSettingsSheetState();
@@ -43,7 +48,12 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
               max: 28,
               divisions: 14,
               label: _fontSize.toStringAsFixed(0),
-              onChanged: (value) => setState(() => _fontSize = value),
+              onChanged: (value) {
+                setState(() => _fontSize = value);
+                widget.onChanged?.call(
+                  ReaderSettings(fontSize: _fontSize, theme: _theme),
+                );
+              },
             ),
             const SizedBox(height: 8),
             const Text('背景'),
@@ -55,26 +65,21 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
                 return ChoiceChip(
                   label: Text(theme.name),
                   selected: selected,
-                  onSelected: (_) => setState(() => _theme = theme),
+                  onSelected: (_) {
+                    setState(() => _theme = theme);
+                    widget.onChanged?.call(
+                      ReaderSettings(fontSize: _fontSize, theme: _theme),
+                    );
+                  },
                 );
               }).toList(),
             ),
             const SizedBox(height: 16),
             Row(
               children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
-                ),
-                const Spacer(),
                 FilledButton(
-                  onPressed: () {
-                    Navigator.pop(
-                      context,
-                      ReaderSettings(fontSize: _fontSize, theme: _theme),
-                    );
-                  },
-                  child: const Text('保存'),
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('关闭'),
                 ),
               ],
             ),

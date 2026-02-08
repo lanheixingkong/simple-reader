@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -26,6 +27,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   List<String> _pages = [];
   PageController? _pageController;
   int _currentPage = 0;
+  Timer? _saveTimer;
 
   @override
   void initState() {
@@ -37,6 +39,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   void dispose() {
     _saveProgress();
     _pageController?.dispose();
+    _saveTimer?.cancel();
     super.dispose();
   }
 
@@ -74,12 +77,19 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   void _openSettings() async {
     final settings = _settings;
     if (settings == null) return;
-    final updated = await showModalBottomSheet<ReaderSettings>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => ReaderSettingsSheet(settings: settings),
+      builder: (context) => ReaderSettingsSheet(
+        settings: settings,
+        onChanged: (updated) {
+          _applySettings(updated);
+        },
+      ),
     );
-    if (updated == null) return;
-    await _settingsStore.save(updated);
+  }
+
+  Future<void> _applySettings(ReaderSettings updated) async {
+    _scheduleSave(updated);
     final raw = await File(widget.book.path).readAsString();
     _pages = _paginateText(raw, updated.fontSize);
     _currentPage = min(_currentPage, _pages.length - 1);
@@ -87,6 +97,14 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
     if (mounted) {
       setState(() => _settings = updated);
     }
+  }
+
+  void _scheduleSave(ReaderSettings updated) {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(
+      const Duration(milliseconds: 300),
+      () => _settingsStore.save(updated),
+    );
   }
 
   @override

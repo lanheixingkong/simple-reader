@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -32,6 +33,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   int _currentChapter = 0;
   final Map<String, String> _imageCache = {};
   final Map<String, Future<String>> _chapterHtmlCache = {};
+  Timer? _saveTimer;
 
   @override
   void initState() {
@@ -43,6 +45,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   void dispose() {
     _saveProgress();
     _pageController?.dispose();
+    _saveTimer?.cancel();
     super.dispose();
   }
 
@@ -74,17 +77,32 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   void _openSettings() async {
     final settings = _settings;
     if (settings == null) return;
-    final updated = await showModalBottomSheet<ReaderSettings>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => ReaderSettingsSheet(settings: settings),
+      builder: (context) => ReaderSettingsSheet(
+        settings: settings,
+        onChanged: (updated) {
+          _applySettings(updated);
+        },
+      ),
     );
-    if (updated == null) return;
-    await _settingsStore.save(updated);
+  }
+
+  Future<void> _applySettings(ReaderSettings updated) async {
+    _scheduleSave(updated);
     setState(() {
       _settings = updated;
       _chapterHtmlCache.clear();
     });
     _warmChapter(_currentChapter);
+  }
+
+  void _scheduleSave(ReaderSettings updated) {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(
+      const Duration(milliseconds: 300),
+      () => _settingsStore.save(updated),
+    );
   }
 
   void _openToc() {

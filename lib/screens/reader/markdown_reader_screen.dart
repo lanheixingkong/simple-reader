@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -25,6 +26,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
   ReaderSettings? _settings;
   ScrollController? _scrollController;
   String _content = '';
+  Timer? _saveTimer;
 
   @override
   void initState() {
@@ -36,6 +38,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
   void dispose() {
     _saveProgress();
     _scrollController?.dispose();
+    _saveTimer?.cancel();
     super.dispose();
   }
 
@@ -61,13 +64,28 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen> {
   void _openSettings() async {
     final settings = _settings;
     if (settings == null) return;
-    final updated = await showModalBottomSheet<ReaderSettings>(
+    await showModalBottomSheet<void>(
       context: context,
-      builder: (context) => ReaderSettingsSheet(settings: settings),
+      builder: (context) => ReaderSettingsSheet(
+        settings: settings,
+        onChanged: (updated) {
+          _applySettings(updated);
+        },
+      ),
     );
-    if (updated == null) return;
-    await _settingsStore.save(updated);
+  }
+
+  Future<void> _applySettings(ReaderSettings updated) async {
+    _scheduleSave(updated);
     setState(() => _settings = updated);
+  }
+
+  void _scheduleSave(ReaderSettings updated) {
+    _saveTimer?.cancel();
+    _saveTimer = Timer(
+      const Duration(milliseconds: 300),
+      () => _settingsStore.save(updated),
+    );
   }
 
   @override
