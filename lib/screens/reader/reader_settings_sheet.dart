@@ -60,17 +60,40 @@ class _ReaderSettingsSheetState extends State<ReaderSettingsSheet> {
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
+              runSpacing: 8,
               children: ReaderTheme.values.map((theme) {
                 final selected = _theme == theme;
-                return ChoiceChip(
-                  label: Text(theme.name),
-                  selected: selected,
-                  onSelected: (_) {
+                final color = SettingsStore.backgroundFor(theme);
+                final border = selected
+                    ? Border.all(color: Colors.black.withOpacity(0.75), width: 2)
+                    : Border.all(color: Colors.black12, width: 1);
+                return InkWell(
+                  customBorder: const CircleBorder(),
+                  onTap: () {
                     setState(() => _theme = theme);
                     widget.onChanged?.call(
                       ReaderSettings(fontSize: _fontSize, theme: _theme),
                     );
                   },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 120),
+                    width: selected ? 38 : 34,
+                    height: selected ? 38 : 34,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                      border: border,
+                      boxShadow: selected
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.15),
+                                blurRadius: 6,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
+                          : null,
+                    ),
+                  ),
                 );
               }).toList(),
             ),

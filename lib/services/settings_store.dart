@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-enum ReaderTheme { light, sepia, dark }
+enum ReaderTheme { light, sepia, mint, slate, dark }
 
 class ReaderSettings {
   const ReaderSettings({
@@ -48,9 +48,13 @@ class SettingsStore {
   static Color backgroundFor(ReaderTheme theme) {
     switch (theme) {
       case ReaderTheme.light:
-        return const Color(0xFFF9F9F9);
+        return const Color(0xFFFAFAF7);
       case ReaderTheme.sepia:
-        return const Color(0xFFF2E6D8);
+        return const Color(0xFFF2E7D5);
+      case ReaderTheme.mint:
+        return const Color(0xFFE7F2EC);
+      case ReaderTheme.slate:
+        return const Color(0xFFE8EEF5);
       case ReaderTheme.dark:
         return const Color(0xFF121212);
     }
@@ -60,6 +64,8 @@ class SettingsStore {
     switch (theme) {
       case ReaderTheme.light:
       case ReaderTheme.sepia:
+      case ReaderTheme.mint:
+      case ReaderTheme.slate:
         return const Color(0xFF1D1D1D);
       case ReaderTheme.dark:
         return const Color(0xFFEDEDED);
