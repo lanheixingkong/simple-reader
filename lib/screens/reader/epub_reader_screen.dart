@@ -23,7 +23,8 @@ class EpubReaderScreen extends StatefulWidget {
   State<EpubReaderScreen> createState() => _EpubReaderScreenState();
 }
 
-class _EpubReaderScreenState extends State<EpubReaderScreen> {
+class _EpubReaderScreenState extends State<EpubReaderScreen>
+    with WidgetsBindingObserver {
   final _store = LibraryStore.instance;
   final _settingsStore = SettingsStore.instance;
 
@@ -31,10 +32,15 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   EpubBookRef? _bookRef;
   List<_EpubChapterEntry> _chapters = [];
   PageController? _pageController;
+  final Map<int, ScrollController> _scrollControllers = {};
   int _currentChapter = 0;
+  final Map<int, double> _chapterOffsets = {};
+  final Map<int, double> _chapterProgress = {};
+  final Set<int> _restoredChapters = {};
   final Map<String, String> _imageCache = {};
   final Map<String, Future<String>> _chapterHtmlCache = {};
   Timer? _saveTimer;
+  Timer? _progressSaveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _pageScrollEnabled = ValueNotifier<bool>(true);
   late final ScrollPhysics _pagePhysics = _ToggleableScrollPhysics(
@@ -45,6 +51,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _load();
   }
 
@@ -52,10 +59,24 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   void dispose() {
     _saveProgress();
     _pageController?.dispose();
+    for (final controller in _scrollControllers.values) {
+      controller.dispose();
+    }
     _saveTimer?.cancel();
+    _progressSaveTimer?.cancel();
     _showChrome.dispose();
     _pageScrollEnabled.dispose();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      _saveProgress();
+    }
   }
 
   Future<void> _load() async {
@@ -67,12 +88,19 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
     final initialPage = widget.book.lastPage ?? 0;
     final safeInitial =
         chapters.isEmpty ? 0 : initialPage.clamp(0, chapters.length - 1);
+    final rawOffset = widget.book.lastOffset ?? 0.0;
+    final initialOffset = rawOffset < 0 ? 0.0 : rawOffset;
+    final rawProgress = widget.book.lastProgress;
+    if (rawProgress != null && rawProgress >= 0 && rawProgress <= 1) {
+      _chapterProgress[safeInitial] = rawProgress;
+    }
     _pageController?.dispose();
     _pageController = PageController(initialPage: safeInitial);
     _settings = settings;
     _bookRef = bookRef;
     _chapters = chapters;
     _currentChapter = safeInitial;
+    _chapterOffsets[safeInitial] = initialOffset;
     if (mounted) {
       setState(() {});
     }
@@ -80,7 +108,59 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
   }
 
   Future<void> _saveProgress() async {
-    await _store.updateBookProgress(widget.book.id, lastPage: _currentChapter);
+    final offset = _currentOffset();
+    final progress = _currentProgress();
+    await _store.updateBookProgress(
+      widget.book.id,
+      lastPage: _currentChapter,
+      lastOffset: offset,
+      lastProgress: progress,
+    );
+  }
+
+  void _scheduleProgressSave() {
+    _progressSaveTimer?.cancel();
+    _progressSaveTimer = Timer(
+      const Duration(milliseconds: 500),
+      _saveProgress,
+    );
+  }
+
+  double _currentOffset() {
+    final controller = _scrollControllers[_currentChapter];
+    if (controller != null && controller.hasClients) {
+      return controller.offset;
+    }
+    return _chapterOffsets[_currentChapter] ?? 0.0;
+  }
+
+  double _currentProgress() {
+    final controller = _scrollControllers[_currentChapter];
+    if (controller != null && controller.hasClients) {
+      final max = controller.position.maxScrollExtent;
+      if (max > 0) {
+        return (controller.offset / max).clamp(0.0, 1.0);
+      }
+    }
+    return _chapterProgress[_currentChapter] ?? 0.0;
+  }
+
+  ScrollController _controllerForChapter(int index) {
+    return _scrollControllers.putIfAbsent(index, () {
+      final initialOffset = _chapterOffsets[index] ?? 0.0;
+      final controller = ScrollController(initialScrollOffset: initialOffset);
+      controller.addListener(() {
+        _chapterOffsets[index] = controller.offset;
+        final max = controller.hasClients ? controller.position.maxScrollExtent : 0.0;
+        if (max > 0) {
+          _chapterProgress[index] = (controller.offset / max).clamp(0.0, 1.0);
+        }
+        if (index == _currentChapter) {
+          _scheduleProgressSave();
+        }
+      });
+      return controller;
+    });
   }
 
   void _openSettings() async {
@@ -143,38 +223,47 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
         body: Center(child: CircularProgressIndicator()),
       );
     }
-    return ReaderLayout(
-      book: widget.book,
-      settings: settings,
-      showAppBarListenable: _showChrome,
-      actions: [
-        IconButton(
-          onPressed: _openToc,
-          icon: const Icon(Icons.list),
-          tooltip: '目录',
+    return WillPopScope(
+      onWillPop: () async {
+        await _saveProgress();
+        return true;
+      },
+      child: ReaderLayout(
+        book: widget.book,
+        settings: settings,
+        showAppBarListenable: _showChrome,
+        actions: [
+          IconButton(
+            onPressed: _openToc,
+            icon: const Icon(Icons.list),
+            tooltip: '目录',
+          ),
+          IconButton(
+            onPressed: _openSettings,
+            icon: const Icon(Icons.text_fields),
+            tooltip: '阅读设置',
+          ),
+        ],
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onTap: () => _showChrome.value = !_showChrome.value,
+          child: _chapters.isEmpty
+              ? const Center(child: CircularProgressIndicator())
+              : PageView.builder(
+                  controller: _pageController,
+                  physics: _pagePhysics,
+                  onPageChanged: (index) {
+                    _currentChapter = index;
+                    _chapterOffsets.putIfAbsent(index, () => 0.0);
+                    _chapterProgress.putIfAbsent(index, () => 0.0);
+                    _scheduleProgressSave();
+                    _warmChapter(index);
+                  },
+                  itemCount: _chapters.length,
+                  itemBuilder: (context, index) =>
+                      _buildChapterPage(context, bookRef, settings, index),
+                ),
         ),
-        IconButton(
-          onPressed: _openSettings,
-          icon: const Icon(Icons.text_fields),
-          tooltip: '阅读设置',
-        ),
-      ],
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () => _showChrome.value = !_showChrome.value,
-        child: _chapters.isEmpty
-            ? const Center(child: CircularProgressIndicator())
-            : PageView.builder(
-                controller: _pageController,
-                physics: _pagePhysics,
-                onPageChanged: (index) {
-                  _currentChapter = index;
-                  _warmChapter(index);
-                },
-                itemCount: _chapters.length,
-                itemBuilder: (context, index) =>
-                    _buildChapterPage(context, bookRef, settings, index),
-              ),
       ),
     );
   }
@@ -213,6 +302,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
             height: 1.6,
           ),
         );
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _restoreChapterPosition(index);
+        });
         return NotificationListener<ScrollNotification>(
           onNotification: (notification) {
             if (notification.metrics.axis != Axis.vertical) {
@@ -222,10 +314,18 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
               _setPageScrollEnabled(false);
             } else if (notification is ScrollEndNotification) {
               _setPageScrollEnabled(true);
+              _scheduleProgressSave();
+            }
+            if (notification is ScrollUpdateNotification &&
+                notification.metrics.maxScrollExtent > 0) {
+              _chapterProgress[index] = (notification.metrics.pixels /
+                      notification.metrics.maxScrollExtent)
+                  .clamp(0.0, 1.0);
             }
             return false;
           },
           child: SingleChildScrollView(
+            controller: _controllerForChapter(index),
             key: PageStorageKey('epub-chapter-${chapter.cacheKey}'),
             padding: const EdgeInsets.all(16),
             child: Theme(
@@ -236,6 +336,27 @@ class _EpubReaderScreenState extends State<EpubReaderScreen> {
         );
       },
     );
+  }
+
+  void _restoreChapterPosition(int index) {
+    if (_restoredChapters.contains(index)) return;
+    final controller = _scrollControllers[index];
+    if (controller == null || !controller.hasClients) return;
+    final max = controller.position.maxScrollExtent;
+    if (max <= 0) return;
+    double? progress = _chapterProgress[index];
+    if (progress == null) {
+      final offset = _chapterOffsets[index];
+      if (offset != null && offset > 0) {
+        progress = (offset / max).clamp(0.0, 1.0);
+        _chapterProgress[index] = progress;
+      }
+    }
+    if (progress != null && progress >= 0 && progress <= 1) {
+      final target = (max * progress).clamp(0.0, max);
+      controller.jumpTo(target);
+      _restoredChapters.add(index);
+    }
   }
 
   Widget _buildHtmlWidget(String html, ReaderSettings settings) {

@@ -45,6 +45,7 @@ class Book {
     this.folderId,
     this.lastPage,
     this.lastOffset,
+    this.lastProgress,
     this.hash,
   });
 
@@ -56,6 +57,7 @@ class Book {
   String? folderId;
   int? lastPage;
   double? lastOffset;
+  double? lastProgress;
   String? hash;
 
   Map<String, dynamic> toJson() => {
@@ -67,6 +69,7 @@ class Book {
         'folderId': folderId,
         'lastPage': lastPage,
         'lastOffset': lastOffset,
+        'lastProgress': lastProgress,
         'hash': hash,
       };
 
@@ -82,6 +85,7 @@ class Book {
         folderId: json['folderId'] as String?,
         lastPage: json['lastPage'] as int?,
         lastOffset: (json['lastOffset'] as num?)?.toDouble(),
+        lastProgress: (json['lastProgress'] as num?)?.toDouble(),
         hash: json['hash'] as String?,
       );
 }

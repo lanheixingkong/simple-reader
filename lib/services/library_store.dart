@@ -89,13 +89,16 @@ class LibraryStore {
   }
 
   Future<void> updateBookProgress(String bookId,
-      {int? lastPage, double? lastOffset}) async {
+      {int? lastPage, double? lastOffset, double? lastProgress}) async {
     final book = _state.books.firstWhere((book) => book.id == bookId);
     if (lastPage != null) {
       book.lastPage = lastPage;
     }
     if (lastOffset != null) {
       book.lastOffset = lastOffset;
+    }
+    if (lastProgress != null) {
+      book.lastProgress = lastProgress;
     }
     await save();
   }
