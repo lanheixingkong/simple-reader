@@ -249,17 +249,19 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
       settings: settings,
       showAppBarListenable: _showChrome,
       actions: [
+        IconButton(
+          onPressed: _shareCurrentScreen,
+          icon: const Icon(Icons.ios_share),
+          tooltip: '分享',
+        ),
+      ],
+      bottomActions: [
         if (_toc.isNotEmpty)
           IconButton(
             onPressed: _openToc,
             icon: const Icon(Icons.list),
             tooltip: '目录',
           ),
-        IconButton(
-          onPressed: _shareCurrentScreen,
-          icon: const Icon(Icons.ios_share),
-          tooltip: '分享',
-        ),
         IconButton(
           onPressed: _openSettings,
           icon: const Icon(Icons.text_fields),

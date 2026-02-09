@@ -131,6 +131,8 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
           icon: const Icon(Icons.ios_share),
           tooltip: '分享',
         ),
+      ],
+      bottomActions: [
         IconButton(
           onPressed: _openSettings,
           icon: const Icon(Icons.text_fields),

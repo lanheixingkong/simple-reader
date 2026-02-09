@@ -236,14 +236,16 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         showAppBarListenable: _showChrome,
         actions: [
           IconButton(
-            onPressed: _openToc,
-            icon: const Icon(Icons.list),
-            tooltip: '目录',
-          ),
-          IconButton(
             onPressed: _shareCurrentScreen,
             icon: const Icon(Icons.ios_share),
             tooltip: '分享',
+          ),
+        ],
+        bottomActions: [
+          IconButton(
+            onPressed: _openToc,
+            icon: const Icon(Icons.list),
+            tooltip: '目录',
           ),
           IconButton(
             onPressed: _openSettings,

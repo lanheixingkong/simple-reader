@@ -11,6 +11,7 @@ class ReaderLayout extends StatelessWidget {
     required this.settings,
     required this.child,
     this.actions = const [],
+    this.bottomActions = const [],
     required this.showAppBarListenable,
   });
 
@@ -18,6 +19,7 @@ class ReaderLayout extends StatelessWidget {
   final ReaderSettings settings;
   final Widget child;
   final List<Widget> actions;
+  final List<Widget> bottomActions;
   final ValueListenable<bool> showAppBarListenable;
 
   @override
@@ -55,7 +57,13 @@ class ReaderLayout extends StatelessWidget {
                         child: SizedBox(
                           height: kToolbarHeight,
                           child: AppBar(
-                            title: Text(book.title),
+                            title: Text(
+                              book.title,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleLarge
+                                  ?.copyWith(fontSize: 16),
+                            ),
                             actions: actions,
                             backgroundColor: appBarBackground,
                             foregroundColor: appBarForeground,
@@ -63,6 +71,74 @@ class ReaderLayout extends StatelessWidget {
                             actionsIconTheme:
                                 IconThemeData(color: appBarForeground),
                             elevation: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: SafeArea(
+              top: false,
+              bottom: false,
+              child: ValueListenableBuilder<bool>(
+                valueListenable: showAppBarListenable,
+                builder: (context, showAppBar, _) {
+                  final bottomInset = MediaQuery.of(context).padding.bottom;
+                  const barHeight = kToolbarHeight - 12;
+                  const leadingInset = 12.0;
+                  return IgnorePointer(
+                    ignoring: !showAppBar,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: showAppBar ? 1 : 0,
+                      child: AnimatedSlide(
+                        duration: const Duration(milliseconds: 180),
+                        offset: showAppBar ? Offset.zero : const Offset(0, 0.1),
+                        child: SizedBox(
+                          height: barHeight + bottomInset,
+                          child: Material(
+                            color: appBarBackground,
+                            elevation: 2,
+                            child: Padding(
+                              padding: EdgeInsets.only(bottom: bottomInset),
+                              child: IconButtonTheme(
+                                data: IconButtonThemeData(
+                                  style: IconButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 0,
+                                    ),
+                                    minimumSize: const Size(44, 40),
+                                    iconSize: 26,
+                                  ),
+                                ),
+                                child: Align(
+                                  alignment: Alignment.topLeft,
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(top: 0),
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(
+                                        left: leadingInset,
+                                      ),
+                                      child: Row(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.center,
+                                        children: bottomActions,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
