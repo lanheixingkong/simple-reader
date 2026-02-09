@@ -210,58 +210,62 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       template,
       maxCardHeight,
     );
-    return Container(
-      width: cardWidth,
-      height: contentHeight,
-      decoration: BoxDecoration(
-        color: template.background,
-        borderRadius: BorderRadius.circular(28),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.08),
-            blurRadius: 24,
-            offset: const Offset(0, 12),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.symmetric(
-        horizontal: _cardHorizontalPadding,
-        vertical: _cardVerticalPadding,
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            text,
-            style: TextStyle(
-              fontSize: 16,
-              height: 1.7,
-              color: template.textColor,
+    final media = MediaQuery.of(context);
+    return MediaQuery(
+      data: media.copyWith(textScaleFactor: 1.0),
+      child: Container(
+        width: cardWidth,
+        height: contentHeight,
+        decoration: BoxDecoration(
+          color: template.background,
+          borderRadius: BorderRadius.circular(28),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
             ),
-          ),
-          const SizedBox(height: _footerTopSpacing),
-          Container(
-            height: 1,
-            color: template.accentColor.withOpacity(0.6),
-          ),
-          const SizedBox(height: _footerDividerSpacing),
-          Text(
-            '《${widget.title}》',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w600,
-              color: template.textColor.withOpacity(0.85),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(
+          horizontal: _cardHorizontalPadding,
+          vertical: _cardVerticalPadding,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              text,
+              style: TextStyle(
+                fontSize: 16,
+                height: 1.7,
+                color: template.textColor,
+              ),
             ),
-          ),
-          const SizedBox(height: _footerTitleSpacing),
-          Text(
-            widget.author,
-            style: TextStyle(
-              fontSize: 13,
-              color: template.textColor.withOpacity(0.7),
+            const SizedBox(height: _footerTopSpacing),
+            Container(
+              height: 1,
+              color: template.accentColor.withOpacity(0.6),
             ),
-          ),
-        ],
+            const SizedBox(height: _footerDividerSpacing),
+            Text(
+              '《${widget.title}》',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: template.textColor.withOpacity(0.85),
+              ),
+            ),
+            const SizedBox(height: _footerTitleSpacing),
+            Text(
+              widget.author,
+              style: TextStyle(
+                fontSize: 13,
+                color: template.textColor.withOpacity(0.7),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
