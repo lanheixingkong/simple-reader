@@ -42,10 +42,12 @@ class ReaderLayout extends StatelessWidget {
             left: 0,
             right: 0,
             child: SafeArea(
+              top: false,
               bottom: false,
               child: ValueListenableBuilder<bool>(
                 valueListenable: showAppBarListenable,
                 builder: (context, showAppBar, _) {
+                  final topInset = MediaQuery.of(context).padding.top;
                   return IgnorePointer(
                     ignoring: !showAppBar,
                     child: AnimatedOpacity(
@@ -55,24 +57,36 @@ class ReaderLayout extends StatelessWidget {
                         duration: const Duration(milliseconds: 180),
                         offset: showAppBar ? Offset.zero : const Offset(0, -0.1),
                         child: SizedBox(
-                          height: kToolbarHeight,
-                          child: AppBar(
-                            title: Text(
-                              book.title,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleLarge
-                                  ?.copyWith(fontSize: 16),
-                            ),
-                            actions: actions,
-                            backgroundColor: appBarBackground,
-                            surfaceTintColor: Colors.transparent,
-                            scrolledUnderElevation: 0,
-                            foregroundColor: appBarForeground,
-                            iconTheme: IconThemeData(color: appBarForeground),
-                            actionsIconTheme:
-                                IconThemeData(color: appBarForeground),
+                          height: kToolbarHeight + topInset,
+                          child: Material(
+                            color: appBarBackground,
                             elevation: 2,
+                            child: Padding(
+                              padding: EdgeInsets.only(top: topInset),
+                              child: SizedBox(
+                                height: kToolbarHeight,
+                                child: AppBar(
+                                  primary: false,
+                                  title: Text(
+                                    book.title,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleLarge
+                                        ?.copyWith(fontSize: 16),
+                                  ),
+                                  actions: actions,
+                                  backgroundColor: appBarBackground,
+                                  surfaceTintColor: Colors.transparent,
+                                  scrolledUnderElevation: 0,
+                                  foregroundColor: appBarForeground,
+                                  iconTheme:
+                                      IconThemeData(color: appBarForeground),
+                                  actionsIconTheme:
+                                      IconThemeData(color: appBarForeground),
+                                  elevation: 0,
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
