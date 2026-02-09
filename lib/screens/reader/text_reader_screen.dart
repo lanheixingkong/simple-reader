@@ -8,6 +8,7 @@ import '../../models/library.dart';
 import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
+import 'reader_selection_auto_scroll.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
 import 'reader_tap_zones.dart';
@@ -26,11 +27,13 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   final _settingsStore = SettingsStore.instance;
 
   ReaderSettings? _settings;
-  List<String> _pages = [];
-  PageController? _pageController;
-  int _currentPage = 0;
+  ScrollController? _scrollController;
+  String _content = '';
+  bool _loaded = false;
   Timer? _saveTimer;
+  Timer? _progressSaveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   String _selectedText = '';
 
   @override
@@ -42,9 +45,11 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   @override
   void dispose() {
     _saveProgress();
-    _pageController?.dispose();
+    _scrollController?.dispose();
     _saveTimer?.cancel();
+    _progressSaveTimer?.cancel();
     _showChrome.dispose();
+    _selectionActive.dispose();
     super.dispose();
   }
 
@@ -52,31 +57,47 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
     final settings = await _settingsStore.load();
     final raw = await File(widget.book.path).readAsString();
     _settings = settings;
-    _pages = _paginateText(raw, settings.fontSize);
-    _currentPage = min(widget.book.lastPage ?? 0, max(0, _pages.length - 1));
-    _pageController = PageController(initialPage: _currentPage);
+    _content = raw;
+    _loaded = true;
+    _scrollController = ScrollController(
+      initialScrollOffset: widget.book.lastOffset ?? 0,
+    );
+    _scrollController?.addListener(_onScroll);
     if (mounted) {
       setState(() {});
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final controller = _scrollController;
+        if (controller == null || !controller.hasClients) return;
+        final max = controller.position.maxScrollExtent;
+        final rawOffset = widget.book.lastOffset ?? 0.0;
+        final target = rawOffset.clamp(0.0, max);
+        if (target != controller.offset) {
+          controller.jumpTo(target);
+        }
+      });
     }
   }
 
   Future<void> _saveProgress() async {
-    await _store.updateBookProgress(widget.book.id, lastPage: _currentPage);
+    final controller = _scrollController;
+    if (controller == null || !controller.hasClients) return;
+    await _store.updateBookProgress(
+      widget.book.id,
+      lastOffset: controller.offset,
+    );
   }
 
-  List<String> _paginateText(String raw, double fontSize) {
-    final size = MediaQuery.of(context).size;
-    final factor = fontSize * fontSize * 1.4;
-    final charsPerPage =
-        max(600, min(2400, (size.width * size.height / factor).floor()));
-    final pages = <String>[];
-    var index = 0;
-    while (index < raw.length) {
-      final end = min(index + charsPerPage, raw.length);
-      pages.add(raw.substring(index, end));
-      index = end;
-    }
-    return pages.isEmpty ? [''] : pages;
+  void _onScroll() {
+    _scheduleProgressSave();
+  }
+
+  void _scheduleProgressSave() {
+    _progressSaveTimer?.cancel();
+    _progressSaveTimer = Timer(
+      const Duration(milliseconds: 500),
+      _saveProgress,
+    );
   }
 
   void _openSettings() async {
@@ -95,12 +116,17 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
 
   Future<void> _applySettings(ReaderSettings updated) async {
     _scheduleSave(updated);
-    final raw = await File(widget.book.path).readAsString();
-    _pages = _paginateText(raw, updated.fontSize);
-    _currentPage = min(_currentPage, _pages.length - 1);
-    _pageController?.jumpToPage(_currentPage);
     if (mounted) {
       setState(() => _settings = updated);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final controller = _scrollController;
+        if (controller == null || !controller.hasClients) return;
+        final max = controller.position.maxScrollExtent;
+        final target = controller.offset.clamp(0.0, max);
+        if (target != controller.offset) {
+          controller.jumpTo(target);
+        }
+      });
     }
   }
 
@@ -140,21 +166,22 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
         ),
       ],
       child: ReaderTapZones(
-        onTapLeft: _previousPage,
-        onTapRight: _nextPage,
+        onTapLeft: _pageUp,
+        onTapRight: _pageDown,
         onTapCenter: _toggleChrome,
-        child: _pages.isEmpty
+        child: !_loaded
             ? const Center(child: CircularProgressIndicator())
-            : PageView.builder(
-                controller: _pageController,
-                physics: const NeverScrollableScrollPhysics(),
-                onPageChanged: (index) => _currentPage = index,
-                itemCount: _pages.length,
-                itemBuilder: (context, index) => Padding(
+            : ReaderSelectionAutoScroll(
+                controller: _scrollController,
+                selectionActive: _selectionActive,
+                child: SingleChildScrollView(
+                  controller: _scrollController,
                   padding: const EdgeInsets.all(16),
                   child: SelectionArea(
                     onSelectionChanged: (content) {
-                      _selectedText = content?.plainText.trim() ?? '';
+                      final text = content?.plainText.trim() ?? '';
+                      _selectedText = text;
+                      _selectionActive.value = text.isNotEmpty;
                     },
                     contextMenuBuilder: (context, selectableRegionState) {
                       final items = List<ContextMenuButtonItem>.from(
@@ -180,7 +207,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
                       );
                     },
                     child: Text(
-                      _pages[index],
+                      _content,
                       style: TextStyle(
                         fontSize: settings.fontSize,
                         color: foreground,
@@ -198,29 +225,38 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
     _showChrome.value = !_showChrome.value;
   }
 
-  void _previousPage() {
-    final controller = _pageController;
+  void _pageUp() {
+    final controller = _scrollController;
     if (controller == null || !controller.hasClients) return;
-    if (_currentPage <= 0) return;
-    controller.previousPage(
+    final height = MediaQuery.of(context).size.height;
+    final target = (controller.offset - height * 0.9).clamp(
+      0.0,
+      controller.position.maxScrollExtent,
+    );
+    controller.animateTo(
+      target,
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
     );
   }
 
-  void _nextPage() {
-    final controller = _pageController;
+  void _pageDown() {
+    final controller = _scrollController;
     if (controller == null || !controller.hasClients) return;
-    if (_currentPage >= _pages.length - 1) return;
-    controller.nextPage(
+    final height = MediaQuery.of(context).size.height;
+    final target = (controller.offset + height * 0.9).clamp(
+      0.0,
+      controller.position.maxScrollExtent,
+    );
+    controller.animateTo(
+      target,
       duration: const Duration(milliseconds: 180),
       curve: Curves.easeOut,
     );
   }
 
   Future<void> _shareCurrentPage() async {
-    if (_pages.isEmpty) return;
-    final text = _pages[_currentPage].trim();
+    final text = _estimateVisibleText().trim();
     if (text.isEmpty) return;
     await _openShareSheet(text, sourceLabel: '当前屏幕');
   }
@@ -254,5 +290,28 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
       label: label,
       onPressed: item.onPressed,
     );
+  }
+
+  String _estimateVisibleText() {
+    if (_content.isEmpty) return '';
+    final controller = _scrollController;
+    if (controller == null || !controller.hasClients) {
+      return _content;
+    }
+    final settings = _settings;
+    if (settings == null) return _content;
+    final size = MediaQuery.of(context).size;
+    final factor = settings.fontSize * settings.fontSize * 1.4;
+    final charsPerScreen = max(
+      600,
+      min(2400, (size.width * size.height / factor).floor()),
+    );
+    final maxExtent = controller.position.maxScrollExtent;
+    final progress = maxExtent <= 0
+        ? 0.0
+        : (controller.offset / maxExtent).clamp(0.0, 1.0);
+    final start = (_content.length * progress).floor();
+    final end = (start + charsPerScreen).clamp(0, _content.length);
+    return _content.substring(start, end);
   }
 }

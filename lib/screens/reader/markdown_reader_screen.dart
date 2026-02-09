@@ -14,6 +14,7 @@ import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
+import 'reader_selection_auto_scroll.dart';
 import 'reader_tap_zones.dart';
 
 class MarkdownReaderScreen extends StatefulWidget {
@@ -37,6 +38,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
+  final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   final List<_TocEntry> _toc = [];
   final List<GlobalKey> _headingKeys = [];
   int _headingKeyCursor = 0;
@@ -56,6 +58,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     _saveTimer?.cancel();
     _progressSaveTimer?.cancel();
     _showChrome.dispose();
+    _selectionActive.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -272,49 +275,55 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
         onTapLeft: _pageUp,
         onTapRight: _pageDown,
         onTapCenter: _toggleChrome,
-        child: SingleChildScrollView(
+        child: ReaderSelectionAutoScroll(
           controller: _scrollController,
-          padding: const EdgeInsets.all(16),
-          child: SelectionArea(
-            onSelectionChanged: (content) {
-              _selectedText = content?.plainText.trim() ?? '';
-            },
-            contextMenuBuilder: (context, selectableRegionState) {
-              final items = List<ContextMenuButtonItem>.from(
-                selectableRegionState.contextMenuButtonItems ?? const [],
-              );
-              final localizedItems = items.map(_localizedMenuItem).toList();
-              localizedItems.add(
-                ContextMenuButtonItem(
-                  label: '分享',
-                  onPressed: () {
-                    final text = _selectedText;
-                    selectableRegionState.hideToolbar();
-                    if (text.isEmpty) return;
-                    _openShareSheet(text, sourceLabel: '已选文字');
-                  },
-                ),
-              );
-              return AdaptiveTextSelectionToolbar.buttonItems(
-                anchors: selectableRegionState.contextMenuAnchors,
-                buttonItems: localizedItems,
-              );
-            },
-            child: MarkdownBody(
-              data: _content,
-              builders: {
-                'h1': _HeadingBuilder(_nextHeadingKey),
-                'h2': _HeadingBuilder(_nextHeadingKey),
-                'h3': _HeadingBuilder(_nextHeadingKey),
-                'h4': _HeadingBuilder(_nextHeadingKey),
-                'h5': _HeadingBuilder(_nextHeadingKey),
-                'h6': _HeadingBuilder(_nextHeadingKey),
+          selectionActive: _selectionActive,
+          child: SingleChildScrollView(
+            controller: _scrollController,
+            padding: const EdgeInsets.all(16),
+            child: SelectionArea(
+              onSelectionChanged: (content) {
+                final text = content?.plainText.trim() ?? '';
+                _selectedText = text;
+                _selectionActive.value = text.isNotEmpty;
               },
-              styleSheet: MarkdownStyleSheet(
-                p: TextStyle(
-                  fontSize: settings.fontSize,
-                  color: foreground,
-                  height: 1.6,
+              contextMenuBuilder: (context, selectableRegionState) {
+                final items = List<ContextMenuButtonItem>.from(
+                  selectableRegionState.contextMenuButtonItems ?? const [],
+                );
+                final localizedItems = items.map(_localizedMenuItem).toList();
+                localizedItems.add(
+                  ContextMenuButtonItem(
+                    label: '分享',
+                    onPressed: () {
+                      final text = _selectedText;
+                      selectableRegionState.hideToolbar();
+                      if (text.isEmpty) return;
+                      _openShareSheet(text, sourceLabel: '已选文字');
+                    },
+                  ),
+                );
+                return AdaptiveTextSelectionToolbar.buttonItems(
+                  anchors: selectableRegionState.contextMenuAnchors,
+                  buttonItems: localizedItems,
+                );
+              },
+              child: MarkdownBody(
+                data: _content,
+                builders: {
+                  'h1': _HeadingBuilder(_nextHeadingKey),
+                  'h2': _HeadingBuilder(_nextHeadingKey),
+                  'h3': _HeadingBuilder(_nextHeadingKey),
+                  'h4': _HeadingBuilder(_nextHeadingKey),
+                  'h5': _HeadingBuilder(_nextHeadingKey),
+                  'h6': _HeadingBuilder(_nextHeadingKey),
+                },
+                styleSheet: MarkdownStyleSheet(
+                  p: TextStyle(
+                    fontSize: settings.fontSize,
+                    color: foreground,
+                    height: 1.6,
+                  ),
                 ),
               ),
             ),

@@ -13,6 +13,7 @@ import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
+import 'reader_selection_auto_scroll.dart';
 import 'reader_tap_zones.dart';
 
 class EpubReaderScreen extends StatefulWidget {
@@ -44,6 +45,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   final Map<int, List<GlobalKey>> _blockKeys = {};
   final Map<int, GlobalKey> _scrollKeys = {};
   String _selectedText = '';
+  final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
@@ -65,6 +67,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     _saveTimer?.cancel();
     _progressSaveTimer?.cancel();
     _showChrome.dispose();
+    _selectionActive.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -357,13 +360,22 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           },
           child: KeyedSubtree(
             key: _scrollKeyForChapter(index),
-            child: SingleChildScrollView(
+            child: ReaderSelectionAutoScroll(
               controller: _controllerForChapter(index),
-              key: PageStorageKey('epub-chapter-${chapter.cacheKey}'),
-              padding: const EdgeInsets.all(16),
-              child: Theme(
-                data: baseTheme.copyWith(textTheme: updatedTextTheme),
-                child: _buildHtmlWidget(html, settings, index),
+              selectionActive: _selectionActive,
+              child: SingleChildScrollView(
+                controller: _controllerForChapter(index),
+                key: PageStorageKey('epub-chapter-${chapter.cacheKey}'),
+                padding: const EdgeInsets.all(16),
+                child: Theme(
+                  data: baseTheme.copyWith(textTheme: updatedTextTheme),
+                  child: _buildHtmlWidget(
+                    html,
+                    settings,
+                    index,
+                    _controllerForChapter(index),
+                  ),
+                ),
               ),
             ),
           ),
@@ -393,8 +405,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     }
   }
 
-  Widget _buildHtmlWidget(
-      String html, ReaderSettings settings, int chapterIndex) {
+  Widget _buildHtmlWidget(String html, ReaderSettings settings,
+      int chapterIndex, ScrollController controller) {
     final source = html.isEmpty ? '<p></p>' : html;
     final cacheKey = _chapters[chapterIndex].cacheKey;
     final blocks = _chapterBlocksCache.putIfAbsent(
@@ -407,55 +419,62 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       height: 1.6,
       color: SettingsStore.textFor(settings.theme),
     );
-    return SelectionArea(
-      onSelectionChanged: (content) {
-        _selectedText = content?.plainText.trim() ?? '';
-      },
-      contextMenuBuilder: (context, selectableRegionState) {
-        final items = List<ContextMenuButtonItem>.from(
-          selectableRegionState.contextMenuButtonItems ?? const [],
-        );
-        final localizedItems = items.map(_localizedMenuItem).toList();
-        localizedItems.add(
-          ContextMenuButtonItem(
-            label: '分享',
-            onPressed: () {
-              final selectedText = _selectedText;
-              selectableRegionState.hideToolbar();
-              if (selectedText.isEmpty) return;
-              _openShareSheet(
-                selectedText,
-                sourceLabel: '已选文字',
-              );
-            },
-          ),
-        );
-        return AdaptiveTextSelectionToolbar.buttonItems(
-          anchors: selectableRegionState.contextMenuAnchors,
-          buttonItems: localizedItems,
-        );
-      },
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < blocks.length; i++)
-            if (blocks[i].imageBytes != null)
-              Padding(
-                key: keys[i],
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Image.memory(
-                  blocks[i].imageBytes!,
-                  fit: BoxFit.contain,
-                  gaplessPlayback: true,
+    return ReaderSelectionAutoScroll(
+      controller: controller,
+      selectionActive: _selectionActive,
+      child: SelectionArea(
+        onSelectionChanged: (content) {
+          final text = content?.plainText.trim() ?? '';
+          _selectedText = text;
+          _selectionActive.value = text.isNotEmpty;
+        },
+        contextMenuBuilder: (context, selectableRegionState) {
+          final items = List<ContextMenuButtonItem>.from(
+            selectableRegionState.contextMenuButtonItems ?? const [],
+          );
+          final localizedItems = items.map(_localizedMenuItem).toList();
+          localizedItems.add(
+            ContextMenuButtonItem(
+              label: '分享',
+              onPressed: () {
+                final selectedText = _selectedText;
+                selectableRegionState.hideToolbar();
+                if (selectedText.isEmpty) return;
+                _openShareSheet(
+                  selectedText,
+                  sourceLabel: '已选文字',
+                );
+              },
+            ),
+          );
+          return AdaptiveTextSelectionToolbar.buttonItems(
+            anchors: selectableRegionState.contextMenuAnchors,
+            buttonItems: localizedItems,
+          );
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < blocks.length; i++)
+              if (blocks[i].imageBytes != null)
+                Padding(
+                  key: keys[i],
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Image.memory(
+                    blocks[i].imageBytes!,
+                    fit: BoxFit.contain,
+                    gaplessPlayback: true,
+                  ),
+                )
+              else if (blocks[i].text != null &&
+                  blocks[i].text!.trim().isNotEmpty)
+                Padding(
+                  key: keys[i],
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text('${blocks[i].text!}\n', style: textStyle),
                 ),
-              )
-            else if (blocks[i].text != null && blocks[i].text!.trim().isNotEmpty)
-              Padding(
-                key: keys[i],
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text('${blocks[i].text!}\n', style: textStyle),
-              ),
-        ],
+          ],
+        ),
       ),
     );
   }
