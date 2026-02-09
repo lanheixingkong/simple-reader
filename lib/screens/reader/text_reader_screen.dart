@@ -10,6 +10,7 @@ import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
+import 'reader_tap_zones.dart';
 
 class TextReaderScreen extends StatefulWidget {
   const TextReaderScreen({super.key, required this.book});
@@ -31,8 +32,6 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   Timer? _saveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   String _selectedText = '';
-  Offset? _tapDownPosition;
-  DateTime? _tapDownTime;
 
   @override
   void initState() {
@@ -138,19 +137,15 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
           tooltip: '阅读设置',
         ),
       ],
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (event) {
-          _tapDownPosition = event.position;
-          _tapDownTime = DateTime.now();
-        },
-        onPointerUp: (event) {
-          _handleTapToggle(event.position);
-        },
+      child: ReaderTapZones(
+        onTapLeft: _previousPage,
+        onTapRight: _nextPage,
+        onTapCenter: _toggleChrome,
         child: _pages.isEmpty
             ? const Center(child: CircularProgressIndicator())
             : PageView.builder(
                 controller: _pageController,
+                physics: const NeverScrollableScrollPhysics(),
                 onPageChanged: (index) => _currentPage = index,
                 itemCount: _pages.length,
                 itemBuilder: (context, index) => Padding(
@@ -197,17 +192,28 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
     );
   }
 
-  void _handleTapToggle(Offset upPosition) {
-    final downPosition = _tapDownPosition;
-    final downTime = _tapDownTime;
-    _tapDownPosition = null;
-    _tapDownTime = null;
-    if (downPosition == null || downTime == null) return;
-    final distance = (upPosition - downPosition).distance;
-    final elapsed = DateTime.now().difference(downTime);
-    if (distance <= 12 && elapsed.inMilliseconds <= 280) {
-      _showChrome.value = !_showChrome.value;
-    }
+  void _toggleChrome() {
+    _showChrome.value = !_showChrome.value;
+  }
+
+  void _previousPage() {
+    final controller = _pageController;
+    if (controller == null || !controller.hasClients) return;
+    if (_currentPage <= 0) return;
+    controller.previousPage(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _nextPage() {
+    final controller = _pageController;
+    if (controller == null || !controller.hasClients) return;
+    if (_currentPage >= _pages.length - 1) return;
+    controller.nextPage(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
   }
 
   Future<void> _shareCurrentPage() async {

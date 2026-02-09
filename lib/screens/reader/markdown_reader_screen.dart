@@ -14,6 +14,7 @@ import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
+import 'reader_tap_zones.dart';
 
 class MarkdownReaderScreen extends StatefulWidget {
   const MarkdownReaderScreen({super.key, required this.book});
@@ -40,8 +41,6 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   final List<GlobalKey> _headingKeys = [];
   int _headingKeyCursor = 0;
   String _selectedText = '';
-  Offset? _tapDownPosition;
-  DateTime? _tapDownTime;
 
   @override
   void initState() {
@@ -267,15 +266,10 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
           tooltip: '阅读设置',
         ),
       ],
-      child: Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: (event) {
-          _tapDownPosition = event.position;
-          _tapDownTime = DateTime.now();
-        },
-        onPointerUp: (event) {
-          _handleTapToggle(event.position);
-        },
+      child: ReaderTapZones(
+        onTapLeft: _pageUp,
+        onTapRight: _pageDown,
+        onTapCenter: _toggleChrome,
         child: SingleChildScrollView(
           controller: _scrollController,
           padding: const EdgeInsets.all(16),
@@ -328,17 +322,38 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     );
   }
 
-  void _handleTapToggle(Offset upPosition) {
-    final downPosition = _tapDownPosition;
-    final downTime = _tapDownTime;
-    _tapDownPosition = null;
-    _tapDownTime = null;
-    if (downPosition == null || downTime == null) return;
-    final distance = (upPosition - downPosition).distance;
-    final elapsed = DateTime.now().difference(downTime);
-    if (distance <= 12 && elapsed.inMilliseconds <= 280) {
-      _showChrome.value = !_showChrome.value;
-    }
+  void _toggleChrome() {
+    _showChrome.value = !_showChrome.value;
+  }
+
+  void _pageUp() {
+    final controller = _scrollController;
+    if (controller == null || !controller.hasClients) return;
+    final height = MediaQuery.of(context).size.height;
+    final target = (controller.offset - height * 0.9).clamp(
+      0.0,
+      controller.position.maxScrollExtent,
+    );
+    controller.animateTo(
+      target,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _pageDown() {
+    final controller = _scrollController;
+    if (controller == null || !controller.hasClients) return;
+    final height = MediaQuery.of(context).size.height;
+    final target = (controller.offset + height * 0.9).clamp(
+      0.0,
+      controller.position.maxScrollExtent,
+    );
+    controller.animateTo(
+      target,
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
   }
 
   Future<void> _shareCurrentScreen() async {

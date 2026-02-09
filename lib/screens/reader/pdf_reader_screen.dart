@@ -11,6 +11,7 @@ import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'reader_settings_sheet.dart';
+import 'reader_tap_zones.dart';
 
 class PdfReaderScreen extends StatefulWidget {
   const PdfReaderScreen({super.key, required this.book});
@@ -116,15 +117,44 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           tooltip: '阅读设置',
         ),
       ],
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onTap: () => _showChrome.value = !_showChrome.value,
+      child: ReaderTapZones(
+        onTapLeft: _previousPage,
+        onTapRight: _nextPage,
+        onTapCenter: _toggleChrome,
         child: controller == null
             ? const Center(child: CircularProgressIndicator())
             : PdfView(
                 controller: controller,
+                physics: const NeverScrollableScrollPhysics(),
               ),
       ),
+    );
+  }
+
+  void _toggleChrome() {
+    _showChrome.value = !_showChrome.value;
+  }
+
+  void _previousPage() {
+    final controller = _controller;
+    if (controller == null) return;
+    final current = controller.pageListenable.value;
+    if (current <= 1) return;
+    controller.previousPage(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _nextPage() {
+    final controller = _controller;
+    if (controller == null) return;
+    final current = controller.pageListenable.value;
+    final total = controller.pagesCount ?? 0;
+    if (current >= total) return;
+    controller.nextPage(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
     );
   }
 

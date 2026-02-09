@@ -4,7 +4,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:epubx/epubx.dart' show EpubBookRef, EpubChapterRef, EpubReader;
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
@@ -14,6 +13,7 @@ import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
+import 'reader_tap_zones.dart';
 
 class EpubReaderScreen extends StatefulWidget {
   const EpubReaderScreen({super.key, required this.book});
@@ -47,13 +47,6 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
-  final ValueNotifier<bool> _pageScrollEnabled = ValueNotifier<bool>(true);
-  late final ScrollPhysics _pagePhysics = _ToggleableScrollPhysics(
-    _pageScrollEnabled,
-    parent: const PageScrollPhysics(),
-  );
-  Offset? _tapDownPosition;
-  DateTime? _tapDownTime;
 
   @override
   void initState() {
@@ -72,7 +65,6 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     _saveTimer?.cancel();
     _progressSaveTimer?.cancel();
     _showChrome.dispose();
-    _pageScrollEnabled.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -259,20 +251,15 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             tooltip: '阅读设置',
           ),
         ],
-        child: Listener(
-          behavior: HitTestBehavior.translucent,
-          onPointerDown: (event) {
-            _tapDownPosition = event.position;
-            _tapDownTime = DateTime.now();
-          },
-          onPointerUp: (event) {
-            _handleTapToggle(event.position);
-          },
+        child: ReaderTapZones(
+          onTapLeft: _previousChapter,
+          onTapRight: _nextChapter,
+          onTapCenter: _toggleChrome,
           child: _chapters.isEmpty
               ? const Center(child: CircularProgressIndicator())
               : PageView.builder(
                   controller: _pageController,
-                  physics: _pagePhysics,
+                  physics: const NeverScrollableScrollPhysics(),
                   onPageChanged: (index) {
                     _currentChapter = index;
                     _chapterOffsets.putIfAbsent(index, () => 0.0);
@@ -289,17 +276,28 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     );
   }
 
-  void _handleTapToggle(Offset upPosition) {
-    final downPosition = _tapDownPosition;
-    final downTime = _tapDownTime;
-    _tapDownPosition = null;
-    _tapDownTime = null;
-    if (downPosition == null || downTime == null) return;
-    final distance = (upPosition - downPosition).distance;
-    final elapsed = DateTime.now().difference(downTime);
-    if (distance <= 12 && elapsed.inMilliseconds <= 280) {
-      _showChrome.value = !_showChrome.value;
-    }
+  void _toggleChrome() {
+    _showChrome.value = !_showChrome.value;
+  }
+
+  void _previousChapter() {
+    final controller = _pageController;
+    if (controller == null || !controller.hasClients) return;
+    if (_currentChapter <= 0) return;
+    controller.previousPage(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _nextChapter() {
+    final controller = _pageController;
+    if (controller == null || !controller.hasClients) return;
+    if (_currentChapter >= _chapters.length - 1) return;
+    controller.nextPage(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+    );
   }
 
   Widget _buildChapterPage(BuildContext context, EpubBookRef bookRef,
@@ -344,10 +342,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             if (notification.metrics.axis != Axis.vertical) {
               return false;
             }
-            if (notification is ScrollStartNotification) {
-              _setPageScrollEnabled(false);
-            } else if (notification is ScrollEndNotification) {
-              _setPageScrollEnabled(true);
+            if (notification is ScrollEndNotification) {
               _scheduleProgressSave();
             }
             if (notification is ScrollUpdateNotification &&
@@ -670,11 +665,6 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     }
   }
 
-  void _setPageScrollEnabled(bool enabled) {
-    if (_pageScrollEnabled.value == enabled) return;
-    _pageScrollEnabled.value = enabled;
-  }
-
   List<_EpubChapterEntry> _flattenChapters(List<EpubChapterRef> roots) {
     final result = <_EpubChapterEntry>[];
     void visit(List<EpubChapterRef> items) {
@@ -862,40 +852,4 @@ class _HtmlBlock {
 
   final String? text;
   final Uint8List? imageBytes;
-}
-
-class _ToggleableScrollPhysics extends ScrollPhysics {
-  const _ToggleableScrollPhysics(this.enabledListenable, {ScrollPhysics? parent})
-      : super(parent: parent);
-
-  final ValueListenable<bool> enabledListenable;
-
-  bool get _enabled => enabledListenable.value;
-
-  @override
-  _ToggleableScrollPhysics applyTo(ScrollPhysics? ancestor) {
-    return _ToggleableScrollPhysics(
-      enabledListenable,
-      parent: buildParent(ancestor),
-    );
-  }
-
-  @override
-  bool shouldAcceptUserOffset(ScrollMetrics position) {
-    if (!_enabled) return false;
-    return super.shouldAcceptUserOffset(position);
-  }
-
-  @override
-  double applyPhysicsToUserOffset(ScrollMetrics position, double offset) {
-    if (!_enabled) return 0.0;
-    return super.applyPhysicsToUserOffset(position, offset);
-  }
-
-  @override
-  Simulation? createBallisticSimulation(
-      ScrollMetrics position, double velocity) {
-    if (!_enabled) return null;
-    return super.createBallisticSimulation(position, velocity);
-  }
 }
