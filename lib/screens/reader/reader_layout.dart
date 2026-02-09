@@ -66,6 +66,8 @@ class ReaderLayout extends StatelessWidget {
                             ),
                             actions: actions,
                             backgroundColor: appBarBackground,
+                            surfaceTintColor: Colors.transparent,
+                            scrolledUnderElevation: 0,
                             foregroundColor: appBarForeground,
                             iconTheme: IconThemeData(color: appBarForeground),
                             actionsIconTheme:
