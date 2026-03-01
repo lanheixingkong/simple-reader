@@ -41,6 +41,7 @@ dependencies:
   flutter_markdown: ^0.7.4+1
   epubx: ^4.0.0
   pdfx: ^2.6.0
+  syncfusion_flutter_pdf: ^29.2.11
   shared_preferences: ^2.3.2
   crypto: ^3.0.7
   share_plus: ^7.2.1
