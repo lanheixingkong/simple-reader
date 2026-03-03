@@ -27,10 +27,6 @@ class PdfPageTextExtractor {
   }
 
   String _normalize(String raw) {
-    return raw
-        .replaceAll('\r\n', '\n')
-        .replaceAll('\r', '\n')
-        .replaceAll(RegExp(r'\n{3,}'), '\n\n')
-        .trim();
+    return raw.replaceAll('\r\n', '\n').replaceAll('\r', '\n').trim();
   }
 }

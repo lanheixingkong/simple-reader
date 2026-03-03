@@ -1,16 +1,19 @@
 import 'dart:async';
 import 'dart:io';
+
 import 'package:flutter/material.dart';
-import 'package:pdfx/pdfx.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/library.dart';
 import '../../services/library_store.dart';
 import '../../services/pdf_page_ocr_service.dart';
 import '../../services/pdf_page_text_extractor.dart';
 import '../../services/pdf_text_api_store.dart';
+import '../../services/pdf_text_page_cache_store.dart';
 import '../../services/settings_store.dart';
 import 'pdf_text_api_settings_sheet.dart';
 import 'reader_layout.dart';
@@ -27,9 +30,12 @@ class PdfReaderScreen extends StatefulWidget {
 }
 
 class _PdfReaderScreenState extends State<PdfReaderScreen> {
+  static const _modeKeyPrefix = 'pdf_reader_mode_';
+
   final _store = LibraryStore.instance;
   final _settingsStore = SettingsStore.instance;
   final _pdfApiStore = PdfTextApiStore.instance;
+  final _textCacheStore = PdfTextPageCacheStore.instance;
   final _textExtractor = const PdfPageTextExtractor();
   final _ocrService = PdfPageOcrService();
 
@@ -38,8 +44,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   PdfController? _controller;
   Timer? _saveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
+
   final Map<int, _PageTextResult> _pageTextCache = <int, _PageTextResult>{};
-  bool _converting = false;
+  final Map<int, Future<_PageTextResult>> _inFlightTextLoads =
+      <int, Future<_PageTextResult>>{};
+  Timer? _cacheSaveTimer;
+
+  bool _textMode = false;
+  bool _switchingMode = false;
+  bool _textModeLoading = false;
+  int _textModePage = 1;
+  int _totalPages = 1;
+  String? _textModeError;
+  _PageTextResult? _textModeResult;
+  Future<void> _prefetchQueue = Future<void>.value();
 
   @override
   void initState() {
@@ -50,8 +68,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   @override
   void dispose() {
     _saveProgress();
+    unawaited(_persistTextCache());
     _controller?.dispose();
     _saveTimer?.cancel();
+    _cacheSaveTimer?.cancel();
     _showChrome.dispose();
     super.dispose();
   }
@@ -59,19 +79,43 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   Future<void> _load() async {
     final settings = await _settingsStore.load();
     final apiSettings = await _pdfApiStore.load();
+    final prefs = await SharedPreferences.getInstance();
+    final restoreTextMode =
+        prefs.getBool('$_modeKeyPrefix${widget.book.id}') ?? false;
+    final initialPage = (widget.book.lastPage ?? 1).clamp(1, 999999);
+    final controller = PdfController(
+      document: PdfDocument.openFile(widget.book.path),
+      initialPage: initialPage,
+    );
     _settings = settings;
     _pdfApiSettings = apiSettings;
-    _controller = PdfController(
-      document: PdfDocument.openFile(widget.book.path),
-      initialPage: (widget.book.lastPage ?? 1).clamp(1, 999999),
-    );
+    _controller = controller;
+    _textModePage = initialPage;
+    await _loadPersistedTextCache(apiSettings);
+    _textMode = restoreTextMode;
+    unawaited(_refreshTotalPages());
+    if (restoreTextMode) {
+      unawaited(_loadTextModePage(pageNumber: initialPage));
+      _enqueuePrefetch(centerPage: initialPage);
+    }
     if (mounted) {
       setState(() {});
     }
   }
 
+  Future<void> _refreshTotalPages() async {
+    final total = await _resolveTotalPages();
+    if (!mounted) return;
+    setState(() {
+      _totalPages = total;
+      if (_textModePage > total) {
+        _textModePage = total;
+      }
+    });
+  }
+
   Future<void> _saveProgress() async {
-    final page = _controller?.pageListenable.value;
+    final page = _textMode ? _textModePage : _controller?.pageListenable.value;
     if (page != null) {
       await _store.updateBookProgress(widget.book.id, lastPage: page);
     }
@@ -117,15 +161,19 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       showAppBarListenable: _showChrome,
       actions: [
         IconButton(
-          onPressed: _convertCurrentPageToText,
-          icon: _converting
+          onPressed: _switchingMode ? null : _toggleTextMode,
+          icon: _switchingMode
               ? const SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.text_snippet_outlined),
-          tooltip: '转为文本',
+              : Icon(
+                  _textMode
+                      ? Icons.picture_as_pdf_outlined
+                      : Icons.text_snippet_outlined,
+                ),
+          tooltip: _textMode ? '切换到PDF页面' : '切换到文本页面',
         ),
         IconButton(
           onPressed: _shareCurrentPage,
@@ -151,10 +199,64 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
         onTapCenter: _toggleChrome,
         child: controller == null
             ? const Center(child: CircularProgressIndicator())
-            : PdfView(
-                controller: controller,
-                physics: const NeverScrollableScrollPhysics(),
+            : _buildReaderBody(controller),
+      ),
+    );
+  }
+
+  Widget _buildReaderBody(PdfController controller) {
+    if (!_textMode) {
+      return PdfView(
+        controller: controller,
+        physics: const NeverScrollableScrollPhysics(),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+      child: _buildTextModeContent(),
+    );
+  }
+
+  Widget _buildTextModeContent() {
+    if (_textModeLoading && _textModeResult == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_textModeError != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _textModeError!,
+              style: const TextStyle(color: Colors.redAccent),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 10),
+            FilledButton(
+              onPressed: () => _loadTextModePage(
+                pageNumber: _textModePage,
+                forceRefresh: true,
               ),
+              child: const Text('重试本页'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final text = _textModeResult?.text ?? '';
+    if (text.isEmpty) {
+      return const Center(child: Text('无文本内容'));
+    }
+
+    return SingleChildScrollView(
+      key: ValueKey<int>(_textModePage),
+      child: SelectableText(
+        text,
+        style: TextStyle(
+          fontSize: (_settings?.fontSize ?? 18) * 0.95,
+          height: 1.65,
+        ),
       ),
     );
   }
@@ -164,6 +266,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   }
 
   void _previousPage() {
+    if (_textMode) {
+      _changeTextModePage(-1);
+      return;
+    }
     final controller = _controller;
     if (controller == null) return;
     final current = controller.pageListenable.value;
@@ -175,10 +281,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   }
 
   void _nextPage() {
+    if (_textMode) {
+      _changeTextModePage(1);
+      return;
+    }
     final controller = _controller;
     if (controller == null) return;
     final current = controller.pageListenable.value;
-    final total = controller.pagesCount ?? 0;
+    final total = controller.pagesCount ?? _totalPages;
     if (current >= total) return;
     controller.nextPage(
       duration: const Duration(milliseconds: 180),
@@ -186,10 +296,133 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     );
   }
 
+  Future<void> _changeTextModePage(int delta) async {
+    final target = (_textModePage + delta).clamp(1, _totalPages);
+    if (target == _textModePage) return;
+    setState(() {
+      _textModePage = target;
+      _textModeResult = null;
+      _textModeError = null;
+    });
+    await _loadTextModePage(pageNumber: target);
+    _ensurePrefetchAround(target);
+  }
+
+  Future<void> _toggleTextMode() async {
+    final controller = _controller;
+    if (controller == null || _switchingMode) return;
+
+    if (_textMode) {
+      await _exitTextMode();
+      return;
+    }
+
+    final currentPage = controller.pageListenable.value;
+    setState(() {
+      _textMode = true;
+      _textModePage = currentPage;
+      _textModeResult = null;
+      _textModeError = null;
+    });
+    unawaited(_persistReaderMode(true));
+    await _loadTextModePage(pageNumber: currentPage);
+    _ensurePrefetchAround(currentPage);
+  }
+
+  Future<void> _exitTextMode() async {
+    setState(() => _switchingMode = true);
+    try {
+      await _recreateControllerAtPage(_textModePage);
+      if (!mounted) return;
+      setState(() {
+        _textMode = false;
+        _textModeError = null;
+      });
+      unawaited(_persistReaderMode(false));
+    } finally {
+      if (mounted) {
+        setState(() => _switchingMode = false);
+      }
+    }
+  }
+
+  Future<void> _recreateControllerAtPage(int pageNumber) async {
+    final oldController = _controller;
+    final nextController = PdfController(
+      document: PdfDocument.openFile(widget.book.path),
+      initialPage: pageNumber,
+    );
+    _controller = nextController;
+    oldController?.dispose();
+    await _refreshTotalPages();
+  }
+
+  Future<void> _loadTextModePage({
+    required int pageNumber,
+    bool forceRefresh = false,
+  }) async {
+    setState(() {
+      _textModeLoading = true;
+      _textModeError = null;
+    });
+    try {
+      final result = await _loadPageText(
+        pageNumber: pageNumber,
+        forceRefresh: forceRefresh,
+      );
+      if (!mounted || !_textMode || _textModePage != pageNumber) return;
+      setState(() {
+        _textModeResult = result;
+        _textModeError = null;
+      });
+    } catch (err) {
+      if (!mounted || !_textMode || _textModePage != pageNumber) return;
+      final message = err is PdfOcrException ? err.userMessage() : '转文本失败：$err';
+      setState(() {
+        _textModeError = message;
+      });
+    } finally {
+      if (mounted && _textMode && _textModePage == pageNumber) {
+        setState(() => _textModeLoading = false);
+      }
+    }
+  }
+
+  void _enqueuePrefetch({required int centerPage}) {
+    _prefetchQueue = _prefetchQueue.then((_) => _prefetchNearby(centerPage));
+  }
+
+  void _ensurePrefetchAround(int centerPage) {
+    _enqueuePrefetch(centerPage: centerPage);
+  }
+
+  Future<void> _prefetchNearby(int centerPage) async {
+    if (!_textMode) return;
+    final radius = _prefetchRadius();
+    final total = _totalPages;
+    final start = (centerPage - radius).clamp(1, total);
+    final end = (centerPage + radius).clamp(1, total);
+    for (var page = start; page <= end; page++) {
+      if (!_textMode) return;
+      if (_pageTextCache.containsKey(page)) continue;
+      try {
+        await _loadPageText(pageNumber: page);
+      } catch (_) {
+        // Prefetch errors are ignored; current page load handles user feedback.
+      }
+    }
+  }
+
+  int _prefetchRadius() {
+    return (_pdfApiSettings?.prefetchPages ?? 10).clamp(0, 50);
+  }
+
   Future<void> _shareCurrentPage() async {
     final controller = _controller;
     if (controller == null) return;
-    final pageNumber = controller.pageListenable.value;
+    final pageNumber = _textMode
+        ? _textModePage
+        : controller.pageListenable.value;
     try {
       final document = await controller.document;
       final page = await document.getPage(pageNumber);
@@ -237,8 +470,17 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           onSave: (updated) async {
             await _pdfApiStore.save(updated);
             _pageTextCache.clear();
+            _inFlightTextLoads.clear();
+            await _loadPersistedTextCache(updated);
             if (mounted) {
               setState(() => _pdfApiSettings = updated);
+            }
+            if (_textMode) {
+              await _loadTextModePage(
+                pageNumber: _textModePage,
+                forceRefresh: true,
+              );
+              _ensurePrefetchAround(_textModePage);
             }
           },
         ),
@@ -250,35 +492,50 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     return _ocrService.testSettings(settings: settings);
   }
 
-  Future<void> _convertCurrentPageToText() async {
-    final controller = _controller;
-    if (controller == null || _converting) return;
-    final pageNumber = controller.pageListenable.value;
-    setState(() => _converting = true);
-    try {
-      final totalPages = await _resolveTotalPages();
-      if (!mounted) return;
-      await showModalBottomSheet<void>(
-        context: context,
-        isScrollControlled: true,
-        builder: (context) => _PdfTextModeSheet(
-          initialPage: pageNumber,
-          totalPages: totalPages,
-          loadPage: (page, forceRefresh) =>
-              _loadPageText(pageNumber: page, forceRefresh: forceRefresh),
+  Future<void> _loadPersistedTextCache(PdfTextApiSettings settings) async {
+    final cached = await _textCacheStore.load(
+      bookId: widget.book.id,
+      settings: settings,
+    );
+    _pageTextCache
+      ..clear()
+      ..addEntries(
+        cached.entries.map(
+          (entry) => MapEntry(
+            entry.key,
+            _PageTextResult(text: entry.value.text, source: entry.value.source),
+          ),
         ),
       );
-    } catch (err) {
-      if (!mounted) return;
-      final message = err is PdfOcrException ? err.userMessage() : '转文本失败：$err';
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    } finally {
-      if (mounted) {
-        setState(() => _converting = false);
-      }
-    }
+  }
+
+  void _schedulePersistTextCache() {
+    _cacheSaveTimer?.cancel();
+    _cacheSaveTimer = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_persistTextCache());
+    });
+  }
+
+  Future<void> _persistTextCache() async {
+    final settings = _pdfApiSettings;
+    if (settings == null) return;
+    final pages = <int, PdfTextCachedPage>{
+      for (final entry in _pageTextCache.entries)
+        entry.key: PdfTextCachedPage(
+          text: entry.value.text,
+          source: entry.value.source,
+        ),
+    };
+    await _textCacheStore.saveAll(
+      bookId: widget.book.id,
+      settings: settings,
+      pages: pages,
+    );
+  }
+
+  Future<void> _persistReaderMode(bool textMode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('$_modeKeyPrefix${widget.book.id}', textMode);
   }
 
   Future<List<int>?> _renderPageAsPngBytes(int pageNumber) async {
@@ -314,6 +571,25 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   Future<_PageTextResult> _loadPageText({
     required int pageNumber,
     bool forceRefresh = false,
+  }) {
+    if (!forceRefresh) {
+      final cached = _pageTextCache[pageNumber];
+      if (cached != null) return Future<_PageTextResult>.value(cached);
+      final loading = _inFlightTextLoads[pageNumber];
+      if (loading != null) return loading;
+    }
+
+    final future = _loadPageTextInternal(
+      pageNumber: pageNumber,
+      forceRefresh: forceRefresh,
+    );
+    _inFlightTextLoads[pageNumber] = future;
+    return future.whenComplete(() => _inFlightTextLoads.remove(pageNumber));
+  }
+
+  Future<_PageTextResult> _loadPageTextInternal({
+    required int pageNumber,
+    required bool forceRefresh,
   }) async {
     if (!forceRefresh) {
       final cached = _pageTextCache[pageNumber];
@@ -325,12 +601,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       pageNumber: pageNumber,
     );
     if (localText.length >= 10) {
-      final result = _PageTextResult(
-        pageNumber: pageNumber,
-        text: localText,
-        source: '文本层',
-      );
+      final result = _PageTextResult(text: localText, source: '文本层');
       _pageTextCache[pageNumber] = result;
+      _schedulePersistTextCache();
       return result;
     }
 
@@ -357,164 +630,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       );
     }
     final result = _PageTextResult(
-      pageNumber: pageNumber,
       text: text,
       source: settings.providerLabel(),
     );
     _pageTextCache[pageNumber] = result;
+    _schedulePersistTextCache();
     return result;
   }
 }
 
-class _PdfTextModeSheet extends StatefulWidget {
-  const _PdfTextModeSheet({
-    required this.initialPage,
-    required this.totalPages,
-    required this.loadPage,
-  });
-
-  final int initialPage;
-  final int totalPages;
-  final Future<_PageTextResult> Function(int pageNumber, bool forceRefresh)
-  loadPage;
-
-  @override
-  State<_PdfTextModeSheet> createState() => _PdfTextModeSheetState();
-}
-
-class _PdfTextModeSheetState extends State<_PdfTextModeSheet> {
-  late int _currentPage;
-  _PageTextResult? _result;
-  String? _error;
-  bool _loading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _currentPage = widget.initialPage;
-    _fetchPage(_currentPage);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return SafeArea(
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.82,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '文本页模式 $_currentPage/${widget.totalPages}',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              if (_result != null) ...[
-                const SizedBox(height: 4),
-                Text(
-                  '来源：${_result!.source}',
-                  style: const TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-              ],
-              const SizedBox(height: 12),
-              Expanded(child: _buildBody()),
-              const SizedBox(height: 10),
-              Row(
-                children: [
-                  IconButton(
-                    onPressed: _loading || _currentPage <= 1
-                        ? null
-                        : () => _fetchPage(_currentPage - 1),
-                    icon: const Icon(Icons.chevron_left),
-                    tooltip: '上一页',
-                  ),
-                  IconButton(
-                    onPressed: _loading || _currentPage >= widget.totalPages
-                        ? null
-                        : () => _fetchPage(_currentPage + 1),
-                    icon: const Icon(Icons.chevron_right),
-                    tooltip: '下一页',
-                  ),
-                  const Spacer(),
-                  TextButton(
-                    onPressed: _loading
-                        ? null
-                        : () => _fetchPage(_currentPage, true),
-                    child: const Text('重试'),
-                  ),
-                  FilledButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('关闭'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBody() {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (_error != null) {
-      return SingleChildScrollView(
-        child: SelectableText(
-          _error!,
-          style: const TextStyle(fontSize: 14, color: Colors.redAccent),
-        ),
-      );
-    }
-    final text = _result?.text ?? '';
-    if (text.isEmpty) {
-      return const Center(child: Text('无文本'));
-    }
-    return SingleChildScrollView(
-      child: SelectableText(
-        text,
-        style: const TextStyle(height: 1.5, fontSize: 15),
-      ),
-    );
-  }
-
-  Future<void> _fetchPage(int page, [bool forceRefresh = false]) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-      _currentPage = page;
-    });
-    try {
-      final result = await widget.loadPage(page, forceRefresh);
-      if (!mounted) return;
-      setState(() {
-        _result = result;
-        _error = null;
-        _loading = false;
-      });
-    } catch (err) {
-      if (!mounted) return;
-      final msg = err is PdfOcrException ? err.userMessage() : '转文本失败：$err';
-      setState(() {
-        _error = msg;
-        _loading = false;
-      });
-    }
-  }
-}
-
 class _PageTextResult {
-  const _PageTextResult({
-    required this.pageNumber,
-    required this.text,
-    required this.source,
-  });
+  const _PageTextResult({required this.text, required this.source});
 
-  final int pageNumber;
   final String text;
   final String source;
 }

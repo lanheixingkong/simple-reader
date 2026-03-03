@@ -15,7 +15,8 @@ class PdfTextApiSettings {
     required this.baiduAuthUrl,
     required this.baiduOcrUrl,
     required this.prompt,
-  });
+    required int? prefetchPages,
+  }) : _prefetchPages = prefetchPages;
 
   final PdfTextApiProvider provider;
   final String baseUrl;
@@ -28,6 +29,13 @@ class PdfTextApiSettings {
   final String baiduAuthUrl;
   final String baiduOcrUrl;
   final String prompt;
+  final int? _prefetchPages;
+  int get prefetchPages {
+    final value = _prefetchPages ?? 10;
+    if (value < 0) return 0;
+    if (value > 50) return 50;
+    return value;
+  }
 
   factory PdfTextApiSettings.defaults() {
     return const PdfTextApiSettings(
@@ -41,7 +49,10 @@ class PdfTextApiSettings {
       tencentRegion: 'ap-beijing',
       baiduAuthUrl: 'https://aip.baidubce.com/oauth/2.0/token',
       baiduOcrUrl: 'https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic',
-      prompt: '请识别这页PDF图片中的所有文字，尽量保持原段落顺序输出纯文本，不要添加解释。',
+      prompt:
+          '你是严格转写器。请逐行识别并输出该PDF页面中的可见文字，必须保持原文顺序、段落与换行位置。'
+          '禁止总结、改写、纠错、补充、翻译或解释；无法识别的字保留原位并用□代替。仅输出正文文本。',
+      prefetchPages: 10,
     );
   }
 
@@ -57,6 +68,7 @@ class PdfTextApiSettings {
     String? baiduAuthUrl,
     String? baiduOcrUrl,
     String? prompt,
+    int? prefetchPages,
   }) {
     return PdfTextApiSettings(
       provider: provider ?? this.provider,
@@ -70,6 +82,7 @@ class PdfTextApiSettings {
       baiduAuthUrl: baiduAuthUrl ?? this.baiduAuthUrl,
       baiduOcrUrl: baiduOcrUrl ?? this.baiduOcrUrl,
       prompt: prompt ?? this.prompt,
+      prefetchPages: prefetchPages ?? this.prefetchPages,
     );
   }
 
@@ -147,6 +160,7 @@ class PdfTextApiStore {
   static const _baiduAuthUrlKey = 'pdf_text_baidu_auth_url';
   static const _baiduOcrUrlKey = 'pdf_text_baidu_ocr_url';
   static const _promptKey = 'pdf_text_prompt';
+  static const _prefetchPagesKey = 'pdf_text_prefetch_pages';
 
   Future<PdfTextApiSettings> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -170,6 +184,8 @@ class PdfTextApiStore {
       baiduAuthUrl: prefs.getString(_baiduAuthUrlKey) ?? defaults.baiduAuthUrl,
       baiduOcrUrl: prefs.getString(_baiduOcrUrlKey) ?? defaults.baiduOcrUrl,
       prompt: prefs.getString(_promptKey) ?? defaults.prompt,
+      prefetchPages: (prefs.getInt(_prefetchPagesKey) ?? defaults.prefetchPages)
+          .clamp(0, 50),
     );
   }
 
@@ -186,5 +202,6 @@ class PdfTextApiStore {
     await prefs.setString(_baiduAuthUrlKey, settings.baiduAuthUrl);
     await prefs.setString(_baiduOcrUrlKey, settings.baiduOcrUrl);
     await prefs.setString(_promptKey, settings.prompt);
+    await prefs.setInt(_prefetchPagesKey, settings.prefetchPages.clamp(0, 50));
   }
 }

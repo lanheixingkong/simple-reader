@@ -31,6 +31,7 @@ class _PdfTextApiSettingsSheetState extends State<PdfTextApiSettingsSheet> {
   late final TextEditingController _baiduAuthUrlController;
   late final TextEditingController _baiduOcrUrlController;
   late final TextEditingController _promptController;
+  late final TextEditingController _prefetchPagesController;
   bool _testing = false;
   String? _testMessage;
   bool _testPassed = false;
@@ -52,6 +53,9 @@ class _PdfTextApiSettingsSheetState extends State<PdfTextApiSettingsSheet> {
     _baiduAuthUrlController = TextEditingController(text: initial.baiduAuthUrl);
     _baiduOcrUrlController = TextEditingController(text: initial.baiduOcrUrl);
     _promptController = TextEditingController(text: initial.prompt);
+    _prefetchPagesController = TextEditingController(
+      text: initial.prefetchPages.toString(),
+    );
   }
 
   @override
@@ -66,6 +70,7 @@ class _PdfTextApiSettingsSheetState extends State<PdfTextApiSettingsSheet> {
     _baiduAuthUrlController.dispose();
     _baiduOcrUrlController.dispose();
     _promptController.dispose();
+    _prefetchPagesController.dispose();
     super.dispose();
   }
 
@@ -110,6 +115,12 @@ class _PdfTextApiSettingsSheetState extends State<PdfTextApiSettingsSheet> {
                 _textField(_apiKeyController, 'API Key'),
                 const SizedBox(height: 10),
                 _textField(_promptController, '识别提示词', maxLines: 3),
+                const SizedBox(height: 10),
+                _textField(
+                  _prefetchPagesController,
+                  '自动预转换页数（前后）',
+                  keyboardType: TextInputType.number,
+                ),
               ],
               const SizedBox(height: 10),
               OutlinedButton.icon(
@@ -194,10 +205,12 @@ class _PdfTextApiSettingsSheetState extends State<PdfTextApiSettingsSheet> {
     TextEditingController controller,
     String label, {
     int maxLines = 1,
+    TextInputType? keyboardType,
   }) {
     return TextField(
       controller: controller,
       maxLines: maxLines,
+      keyboardType: keyboardType,
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
@@ -227,6 +240,10 @@ class _PdfTextApiSettingsSheetState extends State<PdfTextApiSettingsSheet> {
       prompt: _promptController.text.trim().isEmpty
           ? widget.initial.prompt
           : _promptController.text.trim(),
+      prefetchPages:
+          (int.tryParse(_prefetchPagesController.text.trim()) ??
+                  widget.initial.prefetchPages)
+              .clamp(0, 50),
     );
   }
 
@@ -237,6 +254,7 @@ class _PdfTextApiSettingsSheetState extends State<PdfTextApiSettingsSheet> {
     _tencentRegionController.text = recommended.tencentRegion;
     _baiduAuthUrlController.text = recommended.baiduAuthUrl;
     _baiduOcrUrlController.text = recommended.baiduOcrUrl;
+    _prefetchPagesController.text = recommended.prefetchPages.toString();
     setState(() {});
     ScaffoldMessenger.of(
       context,
