@@ -15,6 +15,7 @@ import '../../services/pdf_page_text_extractor.dart';
 import '../../services/pdf_text_api_store.dart';
 import '../../services/pdf_text_page_cache_store.dart';
 import '../../services/settings_store.dart';
+import 'ai_chat_screen.dart';
 import 'pdf_text_api_settings_sheet.dart';
 import 'reader_layout.dart';
 import 'reader_settings_sheet.dart';
@@ -58,6 +59,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   String? _textModeError;
   _PageTextResult? _textModeResult;
   Future<void> _prefetchQueue = Future<void>.value();
+  String _selectedText = '';
 
   @override
   void initState() {
@@ -183,6 +185,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       ],
       bottomActions: [
         IconButton(
+          onPressed: () => _openAiChat(),
+          icon: const Icon(Icons.chat_bubble_outline),
+          tooltip: 'AI问答',
+        ),
+        IconButton(
           onPressed: _openPdfApiSettings,
           icon: const Icon(Icons.smart_toy_outlined),
           tooltip: 'PDF识别接口',
@@ -251,11 +258,36 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
     return SingleChildScrollView(
       key: ValueKey<int>(_textModePage),
-      child: SelectableText(
-        text,
-        style: TextStyle(
-          fontSize: (_settings?.fontSize ?? 18) * 0.95,
-          height: 1.65,
+      child: SelectionArea(
+        onSelectionChanged: (content) {
+          _selectedText = content?.plainText.trim() ?? '';
+        },
+        contextMenuBuilder: (context, selectableRegionState) {
+          final items = List<ContextMenuButtonItem>.from(
+            selectableRegionState.contextMenuButtonItems,
+          );
+          final localizedItems = items.map(_localizedMenuItem).toList();
+          localizedItems.add(
+            ContextMenuButtonItem(
+              label: 'AI问答',
+              onPressed: () {
+                final selected = _selectedText;
+                selectableRegionState.hideToolbar();
+                _openAiChat(quote: selected);
+              },
+            ),
+          );
+          return AdaptiveTextSelectionToolbar.buttonItems(
+            anchors: selectableRegionState.contextMenuAnchors,
+            buttonItems: localizedItems,
+          );
+        },
+        child: Text(
+          text,
+          style: TextStyle(
+            fontSize: (_settings?.fontSize ?? 18) * 0.95,
+            height: 1.65,
+          ),
         ),
       ),
     );
@@ -636,6 +668,34 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     _pageTextCache[pageNumber] = result;
     _schedulePersistTextCache();
     return result;
+  }
+
+  Future<void> _openAiChat({String? quote}) async {
+    final value = quote?.trim();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AiChatScreen(
+          book: widget.book,
+          initialQuote: value != null && value.isNotEmpty ? value : null,
+        ),
+      ),
+    );
+  }
+
+  ContextMenuButtonItem _localizedMenuItem(ContextMenuButtonItem item) {
+    final label = switch (item.type) {
+      ContextMenuButtonType.copy => '复制',
+      ContextMenuButtonType.selectAll => '全选',
+      ContextMenuButtonType.cut => '剪切',
+      ContextMenuButtonType.paste => '粘贴',
+      _ => item.label,
+    };
+    if (label == item.label) return item;
+    return ContextMenuButtonItem(
+      type: item.type,
+      label: label,
+      onPressed: item.onPressed,
+    );
   }
 }
 

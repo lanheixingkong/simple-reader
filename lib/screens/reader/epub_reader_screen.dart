@@ -11,6 +11,7 @@ import '../../models/library.dart';
 import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
+import 'ai_chat_screen.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
 import 'reader_selection_auto_scroll.dart';
@@ -88,8 +89,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     final chapterRefs = await bookRef.getChapters();
     final chapters = _flattenChapters(chapterRefs);
     final initialPage = widget.book.lastPage ?? 0;
-    final safeInitial =
-        chapters.isEmpty ? 0 : initialPage.clamp(0, chapters.length - 1);
+    final safeInitial = chapters.isEmpty
+        ? 0
+        : initialPage.clamp(0, chapters.length - 1);
     final rawOffset = widget.book.lastOffset ?? 0.0;
     final initialOffset = rawOffset < 0 ? 0.0 : rawOffset;
     final rawProgress = widget.book.lastProgress;
@@ -153,7 +155,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       final controller = ScrollController(initialScrollOffset: initialOffset);
       controller.addListener(() {
         _chapterOffsets[index] = controller.offset;
-        final max = controller.hasClients ? controller.position.maxScrollExtent : 0.0;
+        final max = controller.hasClients
+            ? controller.position.maxScrollExtent
+            : 0.0;
         if (max > 0) {
           _chapterProgress[index] = (controller.offset / max).clamp(0.0, 1.0);
         }
@@ -224,9 +228,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     final settings = _settings;
     final bookRef = _bookRef;
     if (settings == null || bookRef == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     return WillPopScope(
       onWillPop: () async {
@@ -245,6 +247,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           ),
         ],
         bottomActions: [
+          IconButton(
+            onPressed: () => _openAiChat(),
+            icon: const Icon(Icons.chat_bubble_outline),
+            tooltip: 'AI问答',
+          ),
           IconButton(
             onPressed: _openToc,
             icon: const Icon(Icons.list),
@@ -305,8 +312,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     );
   }
 
-  Widget _buildChapterPage(BuildContext context, EpubBookRef bookRef,
-      ReaderSettings settings, int index) {
+  Widget _buildChapterPage(
+    BuildContext context,
+    EpubBookRef bookRef,
+    ReaderSettings settings,
+    int index,
+  ) {
     final chapter = _chapters[index];
     final future = _chapterHtmlCache.putIfAbsent(
       chapter.cacheKey,
@@ -352,9 +363,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             }
             if (notification is ScrollUpdateNotification &&
                 notification.metrics.maxScrollExtent > 0) {
-              _chapterProgress[index] = (notification.metrics.pixels /
-                      notification.metrics.maxScrollExtent)
-                  .clamp(0.0, 1.0);
+              _chapterProgress[index] =
+                  (notification.metrics.pixels /
+                          notification.metrics.maxScrollExtent)
+                      .clamp(0.0, 1.0);
             }
             return false;
           },
@@ -405,8 +417,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     }
   }
 
-  Widget _buildHtmlWidget(String html, ReaderSettings settings,
-      int chapterIndex, ScrollController controller) {
+  Widget _buildHtmlWidget(
+    String html,
+    ReaderSettings settings,
+    int chapterIndex,
+    ScrollController controller,
+  ) {
     final source = html.isEmpty ? '<p></p>' : html;
     final cacheKey = _chapters[chapterIndex].cacheKey;
     final blocks = _chapterBlocksCache.putIfAbsent(
@@ -430,7 +446,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         },
         contextMenuBuilder: (context, selectableRegionState) {
           final items = List<ContextMenuButtonItem>.from(
-            selectableRegionState.contextMenuButtonItems ?? const [],
+            selectableRegionState.contextMenuButtonItems,
           );
           final localizedItems = items.map(_localizedMenuItem).toList();
           localizedItems.add(
@@ -440,10 +456,17 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                 final selectedText = _selectedText;
                 selectableRegionState.hideToolbar();
                 if (selectedText.isEmpty) return;
-                _openShareSheet(
-                  selectedText,
-                  sourceLabel: '已选文字',
-                );
+                _openShareSheet(selectedText, sourceLabel: '已选文字');
+              },
+            ),
+          );
+          localizedItems.add(
+            ContextMenuButtonItem(
+              label: 'AI问答',
+              onPressed: () {
+                final selectedText = _selectedText;
+                selectableRegionState.hideToolbar();
+                _openAiChat(quote: selectedText);
               },
             ),
           );
@@ -566,7 +589,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     return text.trim();
   }
 
-  Future<void> _openShareSheet(String text, {required String sourceLabel}) async {
+  Future<void> _openShareSheet(
+    String text, {
+    required String sourceLabel,
+  }) async {
     final bookRef = _bookRef;
     final title = (bookRef?.Title?.trim().isNotEmpty ?? false)
         ? bookRef!.Title!.trim()
@@ -589,15 +615,26 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _openAiChat({String? quote}) async {
+    final value = quote?.trim();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AiChatScreen(
+          book: widget.book,
+          initialQuote: value != null && value.isNotEmpty ? value : null,
+        ),
+      ),
     );
   }
 
   List<_HtmlBlock> _parseHtmlBlocks(String html) {
     final blocks = <_HtmlBlock>[];
-    final imgTag =
-        RegExp(r'<img[^>]*>', caseSensitive: false, multiLine: true);
+    final imgTag = RegExp(r'<img[^>]*>', caseSensitive: false, multiLine: true);
     var cursor = 0;
     for (final match in imgTag.allMatches(html)) {
       final before = html.substring(cursor, match.start);
@@ -636,13 +673,17 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     var text = html;
     text = text.replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n');
     text = text.replaceAll(
-      RegExp(r'</(p|div|section|article|h[1-6]|li|blockquote)>',
-          caseSensitive: false),
+      RegExp(
+        r'</(p|div|section|article|h[1-6]|li|blockquote)>',
+        caseSensitive: false,
+      ),
       '\n\n',
     );
     text = text.replaceAll(
-      RegExp(r'<(p|div|section|article|h[1-6]|li|blockquote)[^>]*>',
-          caseSensitive: false),
+      RegExp(
+        r'<(p|div|section|article|h[1-6]|li|blockquote)[^>]*>',
+        caseSensitive: false,
+      ),
       '',
     );
     text = text.replaceAll(RegExp(r'<[^>]*>'), ' ');
@@ -673,10 +714,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     final bookRef = _bookRef;
     final settings = _settings;
     if (bookRef == null || settings == null) return;
-    final targets = [
-      index,
-      if (index + 1 < _chapters.length) index + 1,
-    ];
+    final targets = [index, if (index + 1 < _chapters.length) index + 1];
     for (final i in targets) {
       final chapter = _chapters[i];
       _chapterHtmlCache.putIfAbsent(
@@ -693,10 +731,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         final title = (chapter.Title?.trim().isNotEmpty ?? false)
             ? chapter.Title!.trim()
             : '未命名章节';
-        result.add(_EpubChapterEntry(
-          title: title,
-          chapterRef: chapter,
-        ));
+        result.add(_EpubChapterEntry(title: title, chapterRef: chapter));
         final subs = chapter.SubChapters;
         if (subs != null && subs.isNotEmpty) {
           visit(subs);
@@ -708,8 +743,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     return result;
   }
 
-  Future<String> _buildChapterHtml(EpubBookRef bookRef,
-      ReaderSettings settings, _EpubChapterEntry chapter) async {
+  Future<String> _buildChapterHtml(
+    EpubBookRef bookRef,
+    ReaderSettings settings,
+    _EpubChapterEntry chapter,
+  ) async {
     try {
       var html = await chapter.chapterRef.readHtmlContent();
       if (html.trim().isEmpty) return '';
@@ -755,17 +793,17 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       '',
     );
     cleaned = cleaned.replaceAll(
-      RegExp(
-        r'''\sstyle\s*=\s*(".*?"|'.*?'|[^\s>]+)''',
-        caseSensitive: false,
-      ),
+      RegExp(r'''\sstyle\s*=\s*(".*?"|'.*?'|[^\s>]+)''', caseSensitive: false),
       '',
     );
     return cleaned;
   }
 
   Future<String> _resolveImages(
-      EpubBookRef bookRef, String html, String? baseHref) async {
+    EpubBookRef bookRef,
+    String html,
+    String? baseHref,
+  ) async {
     if (baseHref == null || baseHref.isEmpty) return html;
     final imgTag = RegExp(
       r'''<img[^>]+src\s*=\s*(["']?)([^"'\s>]+)\1''',
@@ -792,7 +830,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   Future<String?> _resolveImageSrc(
-      EpubBookRef bookRef, String src, String baseHref) async {
+    EpubBookRef bookRef,
+    String src,
+    String baseHref,
+  ) async {
     if (src.isEmpty) return null;
     if (src.startsWith('http') ||
         src.startsWith('data:') ||
@@ -856,10 +897,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 }
 
 class _EpubChapterEntry {
-  _EpubChapterEntry({
-    required this.title,
-    required this.chapterRef,
-  });
+  _EpubChapterEntry({required this.title, required this.chapterRef});
 
   final String title;
   final EpubChapterRef chapterRef;

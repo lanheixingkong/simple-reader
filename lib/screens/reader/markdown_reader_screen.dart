@@ -12,6 +12,7 @@ import '../../models/library.dart';
 import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
+import 'ai_chat_screen.dart';
 import 'reader_share_sheet.dart';
 import 'reader_settings_sheet.dart';
 import 'reader_selection_auto_scroll.dart';
@@ -151,6 +152,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
         }
       }
     }
+
     for (final node in nodes) {
       visit(node);
     }
@@ -241,9 +243,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   Widget build(BuildContext context) {
     final settings = _settings;
     if (settings == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
     final foreground = SettingsStore.textFor(settings.theme);
     _headingKeyCursor = 0;
@@ -259,6 +259,11 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
         ),
       ],
       bottomActions: [
+        IconButton(
+          onPressed: () => _openAiChat(),
+          icon: const Icon(Icons.chat_bubble_outline),
+          tooltip: 'AI问答',
+        ),
         if (_toc.isNotEmpty)
           IconButton(
             onPressed: _openToc,
@@ -289,7 +294,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
               },
               contextMenuBuilder: (context, selectableRegionState) {
                 final items = List<ContextMenuButtonItem>.from(
-                  selectableRegionState.contextMenuButtonItems ?? const [],
+                  selectableRegionState.contextMenuButtonItems,
                 );
                 final localizedItems = items.map(_localizedMenuItem).toList();
                 localizedItems.add(
@@ -300,6 +305,16 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
                       selectableRegionState.hideToolbar();
                       if (text.isEmpty) return;
                       _openShareSheet(text, sourceLabel: '已选文字');
+                    },
+                  ),
+                );
+                localizedItems.add(
+                  ContextMenuButtonItem(
+                    label: 'AI问答',
+                    onPressed: () {
+                      final text = _selectedText;
+                      selectableRegionState.hideToolbar();
+                      _openAiChat(quote: text);
                     },
                   ),
                 );
@@ -396,8 +411,10 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     return _plainText.substring(start, end);
   }
 
-  Future<void> _openShareSheet(String text,
-      {required String sourceLabel}) async {
+  Future<void> _openShareSheet(
+    String text, {
+    required String sourceLabel,
+  }) async {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -424,6 +441,18 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
       type: item.type,
       label: label,
       onPressed: item.onPressed,
+    );
+  }
+
+  Future<void> _openAiChat({String? quote}) async {
+    final value = quote?.trim();
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AiChatScreen(
+          book: widget.book,
+          initialQuote: value != null && value.isNotEmpty ? value : null,
+        ),
+      ),
     );
   }
 
@@ -467,10 +496,7 @@ class _HeadingBuilder extends MarkdownElementBuilder {
       key: key,
       alignment: Alignment.centerLeft,
       padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        element.textContent,
-        style: style,
-      ),
+      child: Text(element.textContent, style: style),
     );
   }
 }
