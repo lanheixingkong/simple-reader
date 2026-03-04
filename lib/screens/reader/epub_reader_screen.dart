@@ -52,6 +52,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   bool _progressDirty = false;
   bool _savingProgress = false;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
+  String? _loadError;
 
   @override
   void initState() {
@@ -85,32 +86,40 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   Future<void> _load() async {
-    final settings = await _settingsStore.load();
-    final bytes = await File(widget.book.path).readAsBytes();
-    final bookRef = await EpubReader.openBook(bytes);
-    final chapterRefs = await bookRef.getChapters();
-    final chapters = _flattenChapters(chapterRefs);
-    final initialPage = widget.book.lastPage ?? 0;
-    final safeInitial = chapters.isEmpty
-        ? 0
-        : initialPage.clamp(0, chapters.length - 1);
-    final rawOffset = widget.book.lastOffset ?? 0.0;
-    final initialOffset = rawOffset < 0 ? 0.0 : rawOffset;
-    final rawProgress = widget.book.lastProgress;
-    if (rawProgress != null && rawProgress >= 0 && rawProgress <= 1) {
-      _chapterProgress[safeInitial] = rawProgress;
+    try {
+      final settings = await _settingsStore.load();
+      final bytes = await File(widget.book.path).readAsBytes();
+      final bookRef = await EpubReader.openBook(bytes);
+      final chapterRefs = await bookRef.getChapters();
+      final chapters = _flattenChapters(chapterRefs);
+      final initialPage = widget.book.lastPage ?? 0;
+      final safeInitial = chapters.isEmpty
+          ? 0
+          : initialPage.clamp(0, chapters.length - 1);
+      final rawOffset = widget.book.lastOffset ?? 0.0;
+      final initialOffset = rawOffset < 0 ? 0.0 : rawOffset;
+      final rawProgress = widget.book.lastProgress;
+      if (rawProgress != null && rawProgress >= 0 && rawProgress <= 1) {
+        _chapterProgress[safeInitial] = rawProgress;
+      }
+      _pageController?.dispose();
+      _pageController = PageController(initialPage: safeInitial);
+      _settings = settings;
+      _bookRef = bookRef;
+      _chapters = chapters;
+      _currentChapter = safeInitial;
+      _chapterOffsets[safeInitial] = initialOffset;
+      _loadError = null;
+      if (mounted) {
+        setState(() {});
+      }
+      _warmChapter(safeInitial);
+    } catch (e) {
+      _loadError = '无法打开这本 EPUB：$e';
+      if (mounted) {
+        setState(() {});
+      }
     }
-    _pageController?.dispose();
-    _pageController = PageController(initialPage: safeInitial);
-    _settings = settings;
-    _bookRef = bookRef;
-    _chapters = chapters;
-    _currentChapter = safeInitial;
-    _chapterOffsets[safeInitial] = initialOffset;
-    if (mounted) {
-      setState(() {});
-    }
-    _warmChapter(safeInitial);
   }
 
   Future<void> _saveProgress() async {
@@ -244,6 +253,37 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 
   @override
   Widget build(BuildContext context) {
+    final loadError = _loadError;
+    if (loadError != null) {
+      return Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.error_outline, size: 36),
+                const SizedBox(height: 12),
+                Text(
+                  loadError,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () {
+                    setState(() {
+                      _loadError = null;
+                    });
+                    _load();
+                  },
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
     final settings = _settings;
     final bookRef = _bookRef;
     if (settings == null || bookRef == null) {
