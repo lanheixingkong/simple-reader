@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/library.dart';
 import '../services/cover_service.dart';
@@ -18,6 +19,7 @@ class BookshelfScreen extends StatefulWidget {
 
 class _BookshelfScreenState extends State<BookshelfScreen>
     with WidgetsBindingObserver {
+  static const _usageGuideSeenKey = 'bookshelf_usage_guide_seen_v1';
   final _store = LibraryStore.instance;
   String? _selectedFolderId;
   bool _loading = true;
@@ -34,6 +36,47 @@ class _BookshelfScreenState extends State<BookshelfScreen>
   Future<void> _bootstrap() async {
     await _store.init();
     setState(() => _loading = false);
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowFirstUseGuide();
+    });
+  }
+
+  Future<void> _maybeShowFirstUseGuide() async {
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getBool(_usageGuideSeenKey) ?? false;
+    if (seen || !mounted) return;
+    await _showUsageGuide();
+    await prefs.setBool(_usageGuideSeenKey, true);
+  }
+
+  Future<void> _showUsageGuide() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('使用说明'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('1. 点右上角“+”导入 EPUB / PDF / TXT / Markdown。'),
+            SizedBox(height: 8),
+            Text('2. 点击书籍封面开始阅读。'),
+            SizedBox(height: 8),
+            Text('3. 长按书籍可进入多选，支持移动和删除。'),
+            SizedBox(height: 8),
+            Text('4. 点文件夹图标可新建文件夹，长按文件夹可删除。'),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('我知道了'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -246,28 +289,33 @@ class _BookshelfScreenState extends State<BookshelfScreen>
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     final folders = _store.state.folders;
-    final books = _store.state.books
-        .where((book) => _selectedFolderId == null
-            ? book.folderId == null
-            : book.folderId == _selectedFolderId)
-        .toList()
-      ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
+    final books =
+        _store.state.books
+            .where(
+              (book) => _selectedFolderId == null
+                  ? book.folderId == null
+                  : book.folderId == _selectedFolderId,
+            )
+            .toList()
+          ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
 
     return Scaffold(
       appBar: AppBar(
         title: _selectionMode
             ? Text('已选 ${_selectedBookIds.length} 本')
-            : Text(_selectedFolderId == null
-                ? '书架'
-                : folders
-                    .firstWhere((folder) => folder.id == _selectedFolderId)
-                    .name),
+            : Text(
+                _selectedFolderId == null
+                    ? '书架'
+                    : folders
+                          .firstWhere(
+                            (folder) => folder.id == _selectedFolderId,
+                          )
+                          .name,
+              ),
         leading: _selectionMode
             ? IconButton(
                 onPressed: _clearSelection,
@@ -275,12 +323,11 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                 tooltip: '取消选择',
               )
             : _selectedFolderId == null
-                ? null
-                : IconButton(
-                    onPressed: () =>
-                        setState(() => _selectedFolderId = null),
-                    icon: const Icon(Icons.arrow_back),
-                  ),
+            ? null
+            : IconButton(
+                onPressed: () => setState(() => _selectedFolderId = null),
+                icon: const Icon(Icons.arrow_back),
+              ),
         actions: [
           if (_selectionMode) ...[
             IconButton(
@@ -289,8 +336,7 @@ class _BookshelfScreenState extends State<BookshelfScreen>
               tooltip: '移动',
             ),
             IconButton(
-              onPressed:
-                  _selectedBookIds.isEmpty ? null : _deleteSelectedBooks,
+              onPressed: _selectedBookIds.isEmpty ? null : _deleteSelectedBooks,
               icon: const Icon(Icons.delete_outline),
               tooltip: '删除',
             ),
@@ -301,12 +347,17 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                     ? Icons.remove_done
                     : Icons.select_all,
               ),
-              tooltip: _selectedBookIds.length == books.length &&
-                      books.isNotEmpty
+              tooltip:
+                  _selectedBookIds.length == books.length && books.isNotEmpty
                   ? '取消全选'
                   : '全选',
             ),
           ] else ...[
+            IconButton(
+              onPressed: _showUsageGuide,
+              icon: const Icon(Icons.help_outline),
+              tooltip: '使用说明',
+            ),
             IconButton(
               onPressed: _createFolder,
               icon: const Icon(Icons.create_new_folder_outlined),
@@ -331,29 +382,26 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                     sliver: SliverGrid(
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        mainAxisSpacing: 16,
-                        crossAxisSpacing: 16,
-                        childAspectRatio: 0.72,
-                      ),
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final folder = folders[index];
-                          final folderBooks = _store.state.books
-                              .where((book) => book.folderId == folder.id)
-                              .toList()
-                            ..sort(
-                                (a, b) => b.addedAt.compareTo(a.addedAt));
-                          return _FolderTile(
-                            folder: folder,
-                            books: folderBooks.take(4).toList(),
-                            onTap: () =>
-                                setState(() => _selectedFolderId = folder.id),
-                            onLongPress: () => _deleteFolder(folder),
-                          );
-                        },
-                        childCount: folders.length,
-                      ),
+                            crossAxisCount: 3,
+                            mainAxisSpacing: 16,
+                            crossAxisSpacing: 16,
+                            childAspectRatio: 0.72,
+                          ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final folder = folders[index];
+                        final folderBooks =
+                            _store.state.books
+                                .where((book) => book.folderId == folder.id)
+                                .toList()
+                              ..sort((a, b) => b.addedAt.compareTo(a.addedAt));
+                        return _FolderTile(
+                          folder: folder,
+                          books: folderBooks.take(4).toList(),
+                          onTap: () =>
+                              setState(() => _selectedFolderId = folder.id),
+                          onLongPress: () => _deleteFolder(folder),
+                        );
+                      }, childCount: folders.length),
                     ),
                   ),
                 if (_selectedFolderId == null && folders.isNotEmpty)
@@ -369,33 +417,29 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                     sliver: SliverGrid(
                       gridDelegate:
                           const SliverGridDelegateWithFixedCrossAxisCount(
-                        crossAxisCount: 3,
-                        mainAxisSpacing: 16,
-                        crossAxisSpacing: 16,
-                        childAspectRatio: 0.72,
-                      ),
-                      delegate: SliverChildBuilderDelegate(
-                        (context, index) {
-                          final book = books[index];
-                          final selected =
-                              _selectedBookIds.contains(book.id);
-                          return _BookTile(
-                            book: book,
-                            selectionMode: _selectionMode,
-                            selected: selected,
-                            onOpen: () {
-                              Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => ReaderScreen(book: book),
-                                ),
-                              );
-                            },
-                            onEnterSelection: () => _enterSelection(book),
-                            onToggleSelection: () => _toggleSelection(book),
-                          );
-                        },
-                        childCount: books.length,
-                      ),
+                            crossAxisCount: 3,
+                            mainAxisSpacing: 16,
+                            crossAxisSpacing: 16,
+                            childAspectRatio: 0.72,
+                          ),
+                      delegate: SliverChildBuilderDelegate((context, index) {
+                        final book = books[index];
+                        final selected = _selectedBookIds.contains(book.id);
+                        return _BookTile(
+                          book: book,
+                          selectionMode: _selectionMode,
+                          selected: selected,
+                          onOpen: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => ReaderScreen(book: book),
+                              ),
+                            );
+                          },
+                          onEnterSelection: () => _enterSelection(book),
+                          onToggleSelection: () => _toggleSelection(book),
+                        );
+                      }, childCount: books.length),
                     ),
                   ),
                 const SliverToBoxAdapter(child: SizedBox(height: 24)),
@@ -420,10 +464,7 @@ class _EmptyState extends StatelessWidget {
           children: [
             const Icon(Icons.menu_book_outlined, size: 56),
             const SizedBox(height: 12),
-            const Text(
-              '书架里还没有书籍',
-              style: TextStyle(fontSize: 16),
-            ),
+            const Text('书架里还没有书籍', style: TextStyle(fontSize: 16)),
             const SizedBox(height: 12),
             FilledButton.icon(
               onPressed: onImport,
@@ -472,8 +513,7 @@ class _BookTile extends StatelessWidget {
                     right: 8,
                     child: Container(
                       decoration: BoxDecoration(
-                        color:
-                            selected ? Colors.black87 : Colors.black45,
+                        color: selected ? Colors.black87 : Colors.black45,
                         shape: BoxShape.circle,
                       ),
                       padding: const EdgeInsets.all(4),
@@ -615,10 +655,12 @@ class _FolderCoverGrid extends StatelessWidget {
     }
     final tiles = books
         .take(4)
-        .map((book) => ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: _FolderCoverTile(book: book),
-            ))
+        .map(
+          (book) => ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: _FolderCoverTile(book: book),
+          ),
+        )
         .toList();
     return GridView.count(
       crossAxisCount: 2,

@@ -1,10 +1,11 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/library.dart';
 import '../../services/settings_store.dart';
 
-class ReaderLayout extends StatelessWidget {
+class ReaderLayout extends StatefulWidget {
   const ReaderLayout({
     super.key,
     required this.book,
@@ -23,7 +24,60 @@ class ReaderLayout extends StatelessWidget {
   final ValueListenable<bool> showAppBarListenable;
 
   @override
+  State<ReaderLayout> createState() => _ReaderLayoutState();
+}
+
+class _ReaderLayoutState extends State<ReaderLayout> {
+  static const _readerGuideSeenKey = 'reader_usage_guide_seen_v1';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _maybeShowFirstUseGuide();
+    });
+  }
+
+  Future<void> _maybeShowFirstUseGuide() async {
+    final prefs = await SharedPreferences.getInstance();
+    final seen = prefs.getBool(_readerGuideSeenKey) ?? false;
+    if (seen || !mounted) return;
+    await _showUsageGuide();
+    await prefs.setBool(_readerGuideSeenKey, true);
+  }
+
+  Future<void> _showUsageGuide() async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('阅读页操作说明'),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('1. 左侧点击上一页，右侧点击下一页。'),
+            SizedBox(height: 8),
+            Text('2. 中间点击可显示/隐藏顶部与底部工具栏。'),
+            SizedBox(height: 8),
+            Text('3. 长按文字可选中，并使用复制、分享、AI问答。'),
+            SizedBox(height: 8),
+            Text('4. 底部工具栏可调字体/背景，并打开 AI 问答。'),
+          ],
+        ),
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('我知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final settings = widget.settings;
     final background = SettingsStore.backgroundFor(settings.theme);
     final appBarBackground = _appBarBackgroundFor(background);
     final appBarForeground = _appBarForegroundFor(appBarBackground);
@@ -31,12 +85,7 @@ class ReaderLayout extends StatelessWidget {
       backgroundColor: background,
       body: Stack(
         children: [
-          Positioned.fill(
-            child: SafeArea(
-              bottom: false,
-              child: child,
-            ),
-          ),
+          Positioned.fill(child: SafeArea(bottom: false, child: widget.child)),
           Positioned(
             top: 0,
             left: 0,
@@ -45,7 +94,7 @@ class ReaderLayout extends StatelessWidget {
               top: false,
               bottom: false,
               child: ValueListenableBuilder<bool>(
-                valueListenable: showAppBarListenable,
+                valueListenable: widget.showAppBarListenable,
                 builder: (context, showAppBar, _) {
                   final topInset = MediaQuery.of(context).padding.top;
                   return IgnorePointer(
@@ -55,7 +104,9 @@ class ReaderLayout extends StatelessWidget {
                       opacity: showAppBar ? 1 : 0,
                       child: AnimatedSlide(
                         duration: const Duration(milliseconds: 180),
-                        offset: showAppBar ? Offset.zero : const Offset(0, -0.1),
+                        offset: showAppBar
+                            ? Offset.zero
+                            : const Offset(0, -0.1),
                         child: SizedBox(
                           height: kToolbarHeight + topInset,
                           child: Material(
@@ -68,21 +119,30 @@ class ReaderLayout extends StatelessWidget {
                                 child: AppBar(
                                   primary: false,
                                   title: Text(
-                                    book.title,
+                                    widget.book.title,
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleLarge
                                         ?.copyWith(fontSize: 16),
                                   ),
-                                  actions: actions,
+                                  actions: [
+                                    ...widget.actions,
+                                    IconButton(
+                                      onPressed: _showUsageGuide,
+                                      icon: const Icon(Icons.help_outline),
+                                      tooltip: '操作说明',
+                                    ),
+                                  ],
                                   backgroundColor: appBarBackground,
                                   surfaceTintColor: Colors.transparent,
                                   scrolledUnderElevation: 0,
                                   foregroundColor: appBarForeground,
-                                  iconTheme:
-                                      IconThemeData(color: appBarForeground),
-                                  actionsIconTheme:
-                                      IconThemeData(color: appBarForeground),
+                                  iconTheme: IconThemeData(
+                                    color: appBarForeground,
+                                  ),
+                                  actionsIconTheme: IconThemeData(
+                                    color: appBarForeground,
+                                  ),
                                   elevation: 0,
                                 ),
                               ),
@@ -104,7 +164,7 @@ class ReaderLayout extends StatelessWidget {
               top: false,
               bottom: false,
               child: ValueListenableBuilder<bool>(
-                valueListenable: showAppBarListenable,
+                valueListenable: widget.showAppBarListenable,
                 builder: (context, showAppBar, _) {
                   final bottomInset = MediaQuery.of(context).padding.bottom;
                   const barHeight = kToolbarHeight - 12;
@@ -148,7 +208,7 @@ class ReaderLayout extends StatelessWidget {
                                             MainAxisAlignment.start,
                                         crossAxisAlignment:
                                             CrossAxisAlignment.center,
-                                        children: bottomActions,
+                                        children: widget.bottomActions,
                                       ),
                                     ),
                                   ),
@@ -180,8 +240,8 @@ class ReaderLayout extends StatelessWidget {
   Color _appBarForegroundFor(Color background) {
     final luminance = background.computeLuminance();
     if (luminance < 0.2) {
-      return Colors.white.withOpacity(0.92);
+      return Colors.white.withValues(alpha: 0.92);
     }
-    return Colors.black.withOpacity(0.87);
+    return Colors.black.withValues(alpha: 0.87);
   }
 }
