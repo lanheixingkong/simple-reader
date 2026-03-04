@@ -34,6 +34,23 @@
 - `flutter doctor --android-licenses`
 - `flutter run`
 
+## Android APK 打包（已验证）
+1. 设置环境变量（示例）：
+   - `export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-17.0.2.jdk/Contents/Home`
+   - `export PATH="$JAVA_HOME/bin:$PATH"`
+   - `export ANDROID_HOME=/Users/lei/Library/Android/sdk`
+   - `export ANDROID_SDK_ROOT=/Users/lei/Library/Android/sdk`
+2. 拉取依赖并构建：
+   - `flutter pub get`
+   - `flutter build apk --release`
+3. APK 输出：
+   - `build/app/outputs/flutter-apk/app-release.apk`
+
+## Android 依赖兼容说明
+- `image_gallery_saver` 使用项目内本地依赖：`third_party/image_gallery_saver`
+- 原因：上游 `2.0.3` 在 AGP 8 / Java 17 环境下存在兼容问题（namespace、JVM target、旧注册方式）
+- 当前本地版本已完成兼容修复，可直接用于 release 构建
+
 ## Notes
 - Import files are copied into app storage (`Documents/Books`) for sandbox safety.
 - Reading progress (page/scroll offset) is stored locally.
@@ -66,3 +83,20 @@ Simple Reader is a local-only ebook reader (iOS/Android) with bookshelf + folder
 Project structure is Android-ready. After installing Android SDK:
 - `flutter doctor --android-licenses`
 - `flutter run`
+
+### Build APK (verified)
+1. Set env vars (example):
+   - `export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-17.0.2.jdk/Contents/Home`
+   - `export PATH="$JAVA_HOME/bin:$PATH"`
+   - `export ANDROID_HOME=/Users/lei/Library/Android/sdk`
+   - `export ANDROID_SDK_ROOT=/Users/lei/Library/Android/sdk`
+2. Build:
+   - `flutter pub get`
+   - `flutter build apk --release`
+3. Output:
+   - `build/app/outputs/flutter-apk/app-release.apk`
+
+### Android dependency note
+- `image_gallery_saver` is pinned as a local path dependency at `third_party/image_gallery_saver`.
+- Reason: upstream `2.0.3` has AGP 8 / Java 17 compatibility issues.
+- The local copy includes compatibility fixes for release builds.
