@@ -91,7 +91,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       final bytes = await File(widget.book.path).readAsBytes();
       final bookRef = await EpubReader.openBook(bytes);
       final chapterRefs = await bookRef.getChapters();
-      final chapters = _flattenChapters(chapterRefs);
+      final chapters = await _buildChapters(bookRef, chapterRefs);
       final initialPage = widget.book.lastPage ?? 0;
       final safeInitial = chapters.isEmpty
           ? 0
@@ -264,10 +264,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
               children: [
                 const Icon(Icons.error_outline, size: 36),
                 const SizedBox(height: 12),
-                Text(
-                  loadError,
-                  textAlign: TextAlign.center,
-                ),
+                Text(loadError, textAlign: TextAlign.center),
                 const SizedBox(height: 16),
                 FilledButton(
                   onPressed: () {
@@ -790,7 +787,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         final title = (chapter.Title?.trim().isNotEmpty ?? false)
             ? chapter.Title!.trim()
             : '未命名章节';
-        result.add(_EpubChapterEntry(title: title, chapterRef: chapter));
+        result.add(
+          _EpubChapterEntry.fromRef(title: title, chapterRef: chapter),
+        );
         final subs = chapter.SubChapters;
         if (subs != null && subs.isNotEmpty) {
           visit(subs);
@@ -802,25 +801,109 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     return result;
   }
 
+  Future<List<_EpubChapterEntry>> _buildChapters(
+    EpubBookRef bookRef,
+    List<EpubChapterRef> chapterRefs,
+  ) async {
+    final fromToc = _flattenChapters(chapterRefs);
+    final fromSpine = await _chaptersFromSpine(bookRef, fromToc);
+    if (fromToc.isEmpty) return fromSpine;
+    if (fromToc.length <= 1 && fromSpine.length > fromToc.length) {
+      return fromSpine;
+    }
+    return fromToc;
+  }
+
+  Future<List<_EpubChapterEntry>> _chaptersFromSpine(
+    EpubBookRef bookRef,
+    List<_EpubChapterEntry> fromToc,
+  ) async {
+    final itemRefs = bookRef.Schema?.Package?.Spine?.Items ?? [];
+    final manifestItems = bookRef.Schema?.Package?.Manifest?.Items ?? [];
+    if (itemRefs.isEmpty || manifestItems.isEmpty) return fromToc;
+
+    final manifestById = <String, dynamic>{};
+    for (final item in manifestItems) {
+      final id = (item.Id ?? '').trim();
+      if (id.isEmpty) continue;
+      manifestById[id.toLowerCase()] = item;
+    }
+
+    final result = <_EpubChapterEntry>[];
+    for (var i = 0; i < itemRefs.length; i++) {
+      final idRef = (itemRefs[i].IdRef ?? '').toLowerCase();
+      if (idRef.isEmpty) continue;
+      final manifestItem = manifestById[idRef];
+      if (manifestItem == null) continue;
+
+      final href = (manifestItem.Href ?? '').trim();
+      if (href.isEmpty) continue;
+
+      final media = (manifestItem.MediaType ?? '').toLowerCase();
+      final isHtml = media.contains('xhtml') || media.contains('html');
+      if (!isHtml) continue;
+
+      final html = await _readHtmlFromHref(bookRef, href);
+      if (html == null || html.trim().isEmpty) continue;
+
+      result.add(
+        _EpubChapterEntry.fromHref(
+          title: _titleFromHref(href, i + 1),
+          contentHref: href,
+        ),
+      );
+    }
+    return result.isEmpty ? fromToc : result;
+  }
+
+  String _titleFromHref(String href, int index) {
+    final file = p.basenameWithoutExtension(href).trim();
+    if (file.isEmpty) return '章节 $index';
+    final lower = file.toLowerCase();
+    if (lower.contains('titlepage') || lower.contains('cover')) return '封面';
+    return file;
+  }
+
   Future<String> _buildChapterHtml(
     EpubBookRef bookRef,
     ReaderSettings settings,
     _EpubChapterEntry chapter,
   ) async {
     try {
-      var html = await chapter.chapterRef.readHtmlContent();
+      String html;
+      String? baseHref;
+      final chapterRef = chapter.chapterRef;
+      if (chapterRef != null) {
+        html = await chapterRef.readHtmlContent();
+        baseHref = chapterRef.ContentFileName;
+      } else {
+        baseHref = chapter.contentHref;
+        html = await _readHtmlFromHref(bookRef, baseHref) ?? '';
+      }
       if (html.trim().isEmpty) return '';
       html = _normalizeHtml(html);
       html = _stripCss(html);
-      html = await _resolveImages(
-        bookRef,
-        html,
-        chapter.chapterRef.ContentFileName,
-      );
+      html = await _resolveImages(bookRef, html, baseHref);
       return html;
     } catch (_) {
       return '';
     }
+  }
+
+  Future<String?> _readHtmlFromHref(EpubBookRef bookRef, String? href) async {
+    if (href == null || href.isEmpty) return null;
+    final htmlMap = bookRef.Content?.Html ?? {};
+    final normalized = href.replaceFirst(RegExp(r'^\./'), '');
+    final ref = htmlMap[href] ?? htmlMap[normalized];
+    if (ref != null) {
+      return ref.readContentAsText();
+    }
+    for (final entry in htmlMap.entries) {
+      if (entry.key.endsWith(normalized)) {
+        return entry.value.readContentAsText();
+      }
+    }
+    return null;
   }
 
   String _normalizeHtml(String html) {
@@ -956,13 +1039,19 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
 }
 
 class _EpubChapterEntry {
-  _EpubChapterEntry({required this.title, required this.chapterRef});
+  _EpubChapterEntry.fromRef({required this.title, required this.chapterRef})
+    : contentHref = null;
+
+  _EpubChapterEntry.fromHref({required this.title, required this.contentHref})
+    : chapterRef = null;
 
   final String title;
-  final EpubChapterRef chapterRef;
+  final EpubChapterRef? chapterRef;
+  final String? contentHref;
 
-  String get cacheKey =>
-      '${chapterRef.ContentFileName ?? 'unknown'}#${chapterRef.Anchor ?? ''}';
+  String get baseHref => chapterRef?.ContentFileName ?? contentHref ?? '';
+
+  String get cacheKey => '$baseHref#${chapterRef?.Anchor ?? ''}';
 }
 
 class _HtmlBlock {
