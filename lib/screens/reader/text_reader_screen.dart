@@ -33,6 +33,8 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   bool _loaded = false;
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
+  bool _progressDirty = false;
+  bool _savingProgress = false;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   String _selectedText = '';
@@ -90,15 +92,32 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   }
 
   void _onScroll() {
+    _progressDirty = true;
     _scheduleProgressSave();
   }
 
   void _scheduleProgressSave() {
-    _progressSaveTimer?.cancel();
-    _progressSaveTimer = Timer(
-      const Duration(milliseconds: 500),
-      _saveProgress,
+    if (_progressSaveTimer != null) return;
+    _progressSaveTimer = Timer.periodic(
+      const Duration(milliseconds: 800),
+      (_) => _flushProgressSave(),
     );
+  }
+
+  Future<void> _flushProgressSave() async {
+    if (_savingProgress) return;
+    if (!_progressDirty) {
+      _progressSaveTimer?.cancel();
+      _progressSaveTimer = null;
+      return;
+    }
+    _progressDirty = false;
+    _savingProgress = true;
+    try {
+      await _saveProgress();
+    } finally {
+      _savingProgress = false;
+    }
   }
 
   void _openSettings() async {

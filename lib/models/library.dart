@@ -132,14 +132,38 @@ class LibraryState {
 
   String toRawJson() => jsonEncode(toJson());
 
+  static LibraryState? tryFromRawJson(String raw) {
+    final normalized = raw.trim();
+    if (normalized.isEmpty) {
+      return LibraryState.empty();
+    }
+    try {
+      final decoded = jsonDecode(normalized);
+      if (decoded is! Map) {
+        return null;
+      }
+      final json = Map<String, dynamic>.from(decoded);
+      final booksRaw = json['books'];
+      final foldersRaw = json['folders'];
+      final books = booksRaw is List
+          ? booksRaw
+              .whereType<Map>()
+              .map((item) => Book.fromJson(Map<String, dynamic>.from(item)))
+              .toList()
+          : <Book>[];
+      final folders = foldersRaw is List
+          ? foldersRaw
+              .whereType<Map>()
+              .map((item) => Folder.fromJson(Map<String, dynamic>.from(item)))
+              .toList()
+          : <Folder>[];
+      return LibraryState(books: books, folders: folders);
+    } catch (_) {
+      return null;
+    }
+  }
+
   factory LibraryState.fromRawJson(String raw) {
-    final json = jsonDecode(raw) as Map<String, dynamic>;
-    final books = (json['books'] as List<dynamic>? ?? [])
-        .map((item) => Book.fromJson(item as Map<String, dynamic>))
-        .toList();
-    final folders = (json['folders'] as List<dynamic>? ?? [])
-        .map((item) => Folder.fromJson(item as Map<String, dynamic>))
-        .toList();
-    return LibraryState(books: books, folders: folders);
+    return tryFromRawJson(raw) ?? LibraryState.empty();
   }
 }

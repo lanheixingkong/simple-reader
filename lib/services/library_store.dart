@@ -38,7 +38,16 @@ class LibraryStore {
   Future<void> load() async {
     if (await _dataFile.exists()) {
       final raw = await _dataFile.readAsString();
-      _state = LibraryState.fromRawJson(raw);
+      final parsed = LibraryState.tryFromRawJson(raw);
+      if (parsed == null) {
+        _state = LibraryState.empty();
+        await save();
+        return;
+      }
+      _state = parsed;
+      if (raw.trim().isEmpty) {
+        await save();
+      }
     } else {
       _state = LibraryState.empty();
     }

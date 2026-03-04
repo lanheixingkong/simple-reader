@@ -38,6 +38,8 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   String _plainText = '';
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
+  bool _progressDirty = false;
+  bool _savingProgress = false;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   final List<_TocEntry> _toc = [];
@@ -111,15 +113,32 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   }
 
   void _onScroll() {
+    _progressDirty = true;
     _scheduleProgressSave();
   }
 
   void _scheduleProgressSave() {
-    _progressSaveTimer?.cancel();
-    _progressSaveTimer = Timer(
-      const Duration(milliseconds: 500),
-      _saveProgress,
+    if (_progressSaveTimer != null) return;
+    _progressSaveTimer = Timer.periodic(
+      const Duration(milliseconds: 800),
+      (_) => _flushProgressSave(),
     );
+  }
+
+  Future<void> _flushProgressSave() async {
+    if (_savingProgress) return;
+    if (!_progressDirty) {
+      _progressSaveTimer?.cancel();
+      _progressSaveTimer = null;
+      return;
+    }
+    _progressDirty = false;
+    _savingProgress = true;
+    try {
+      await _saveProgress();
+    } finally {
+      _savingProgress = false;
+    }
   }
 
   void _buildToc(String content) {
