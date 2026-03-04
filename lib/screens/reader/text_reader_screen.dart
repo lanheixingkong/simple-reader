@@ -178,14 +178,14 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
       ],
       bottomActions: [
         IconButton(
+          onPressed: _openSettings,
+          icon: const Icon(Icons.text_fields),
+          tooltip: '字体/背景',
+        ),
+        IconButton(
           onPressed: () => _openAiChat(),
           icon: const Icon(Icons.chat_bubble_outline),
           tooltip: 'AI问答',
-        ),
-        IconButton(
-          onPressed: _openSettings,
-          icon: const Icon(Icons.text_fields),
-          tooltip: '阅读设置',
         ),
       ],
       child: ReaderTapZones(

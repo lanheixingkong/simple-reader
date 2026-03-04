@@ -267,11 +267,6 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         ],
         bottomActions: [
           IconButton(
-            onPressed: () => _openAiChat(),
-            icon: const Icon(Icons.chat_bubble_outline),
-            tooltip: 'AI问答',
-          ),
-          IconButton(
             onPressed: _openToc,
             icon: const Icon(Icons.list),
             tooltip: '目录',
@@ -279,7 +274,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
           IconButton(
             onPressed: _openSettings,
             icon: const Icon(Icons.text_fields),
-            tooltip: '阅读设置',
+            tooltip: '字体/背景',
+          ),
+          IconButton(
+            onPressed: () => _openAiChat(),
+            icon: const Icon(Icons.chat_bubble_outline),
+            tooltip: 'AI问答',
           ),
         ],
         child: ReaderTapZones(

@@ -185,19 +185,24 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       ],
       bottomActions: [
         IconButton(
+          onPressed: _openToc,
+          icon: const Icon(Icons.list),
+          tooltip: '目录',
+        ),
+        IconButton(
+          onPressed: _openSettings,
+          icon: const Icon(Icons.text_fields),
+          tooltip: '字体/背景',
+        ),
+        IconButton(
           onPressed: () => _openAiChat(),
           icon: const Icon(Icons.chat_bubble_outline),
           tooltip: 'AI问答',
         ),
         IconButton(
           onPressed: _openPdfApiSettings,
-          icon: const Icon(Icons.smart_toy_outlined),
-          tooltip: 'PDF识别接口',
-        ),
-        IconButton(
-          onPressed: _openSettings,
-          icon: const Icon(Icons.text_fields),
-          tooltip: '阅读设置',
+          icon: const Icon(Icons.tune_outlined),
+          tooltip: 'PDF配置',
         ),
       ],
       child: ReaderTapZones(
@@ -338,6 +343,66 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     });
     await _loadTextModePage(pageNumber: target);
     _ensurePrefetchAround(target);
+  }
+
+  Future<void> _openToc() async {
+    final total = _totalPages;
+    if (total <= 0) return;
+    final selected = await showModalBottomSheet<int>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          children: [
+            const SizedBox(height: 10),
+            const Text(
+              '目录（页码）',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.builder(
+                itemCount: total,
+                itemBuilder: (context, index) {
+                  final page = index + 1;
+                  return ListTile(
+                    title: Text('第 $page 页'),
+                    onTap: () => Navigator.of(context).pop(page),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (selected == null) return;
+    await _goToPage(selected);
+  }
+
+  Future<void> _goToPage(int page) async {
+    final target = page.clamp(1, _totalPages);
+    if (_textMode) {
+      if (target == _textModePage) return;
+      setState(() {
+        _textModePage = target;
+        _textModeResult = null;
+        _textModeError = null;
+      });
+      await _loadTextModePage(pageNumber: target);
+      _ensurePrefetchAround(target);
+      return;
+    }
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      controller.jumpToPage(target);
+    } catch (_) {
+      // Fallback for rare cases where PdfView is not attached yet.
+      await _recreateControllerAtPage(target);
+      if (mounted) {
+        setState(() {});
+      }
+    }
   }
 
   Future<void> _toggleTextMode() async {

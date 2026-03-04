@@ -278,11 +278,6 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
         ),
       ],
       bottomActions: [
-        IconButton(
-          onPressed: () => _openAiChat(),
-          icon: const Icon(Icons.chat_bubble_outline),
-          tooltip: 'AI问答',
-        ),
         if (_toc.isNotEmpty)
           IconButton(
             onPressed: _openToc,
@@ -292,7 +287,12 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
         IconButton(
           onPressed: _openSettings,
           icon: const Icon(Icons.text_fields),
-          tooltip: '阅读设置',
+          tooltip: '字体/背景',
+        ),
+        IconButton(
+          onPressed: () => _openAiChat(),
+          icon: const Icon(Icons.chat_bubble_outline),
+          tooltip: 'AI问答',
         ),
       ],
       child: ReaderTapZones(
