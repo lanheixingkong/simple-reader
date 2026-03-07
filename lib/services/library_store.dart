@@ -2,9 +2,9 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
 import '../models/library.dart';
+import 'app_storage.dart';
 
 class LibraryStore {
   LibraryStore._();
@@ -22,13 +22,13 @@ class LibraryStore {
 
   Future<void> init() async {
     if (_initialized) return;
-    final docsDir = await getApplicationDocumentsDirectory();
-    _rootDir = docsDir;
-    _booksDir = Directory(p.join(docsDir.path, 'Books'));
+    final rootDir = await AppStorage.instance.rootDir();
+    _rootDir = rootDir;
+    _booksDir = Directory(p.join(rootDir.path, 'Books'));
     if (!await _booksDir.exists()) {
       await _booksDir.create(recursive: true);
     }
-    _dataFile = File(p.join(docsDir.path, 'library.json'));
+    _dataFile = File(p.join(rootDir.path, 'library.json'));
     await load();
     await _ensureHashes();
     await importFromInbox();
@@ -45,7 +45,8 @@ class LibraryStore {
         return;
       }
       _state = parsed;
-      if (raw.trim().isEmpty) {
+      final normalized = _normalizeLoadedBookPaths();
+      if (raw.trim().isEmpty || normalized) {
         await save();
       }
     } else {
@@ -54,7 +55,9 @@ class LibraryStore {
   }
 
   Future<void> save() async {
-    await _dataFile.writeAsString(_state.toRawJson());
+    await _dataFile.writeAsString(
+      _state.toRawJson(pathResolver: _toStoredBookPath),
+    );
   }
 
   Future<void> createFolder(String name) async {
@@ -78,10 +81,11 @@ class LibraryStore {
   }
 
   Future<void> deleteFolderAndBooks(String folderId) async {
-    final toDelete =
-        _state.books.where((book) => book.folderId == folderId).toList();
+    final toDelete = _state.books
+        .where((book) => book.folderId == folderId)
+        .toList();
     for (final book in toDelete) {
-      final file = File(book.path);
+      final file = File(_absoluteBookPath(book));
       if (await file.exists()) {
         await file.delete();
       }
@@ -97,8 +101,12 @@ class LibraryStore {
     await save();
   }
 
-  Future<void> updateBookProgress(String bookId,
-      {int? lastPage, double? lastOffset, double? lastProgress}) async {
+  Future<void> updateBookProgress(
+    String bookId, {
+    int? lastPage,
+    double? lastOffset,
+    double? lastProgress,
+  }) async {
     final book = _state.books.firstWhere((book) => book.id == bookId);
     if (lastPage != null) {
       book.lastPage = lastPage;
@@ -116,7 +124,7 @@ class LibraryStore {
     final index = _state.books.indexWhere((book) => book.id == bookId);
     if (index == -1) return;
     final book = _state.books.removeAt(index);
-    final file = File(book.path);
+    final file = File(_absoluteBookPath(book));
     if (await file.exists()) {
       await file.delete();
     }
@@ -127,7 +135,7 @@ class LibraryStore {
     var changed = false;
     for (final book in _state.books) {
       if (book.hash != null) continue;
-      final file = File(book.path);
+      final file = File(_absoluteBookPath(book));
       if (!await file.exists()) continue;
       book.hash = await _hashFile(file);
       changed = true;
@@ -137,8 +145,10 @@ class LibraryStore {
     }
   }
 
-  Future<List<Book>> importFiles(List<String> filePaths,
-      {String? folderId}) async {
+  Future<List<Book>> importFiles(
+    List<String> filePaths, {
+    String? folderId,
+  }) async {
     final imported = <Book>[];
     final existingHashes = _state.books
         .map((book) => book.hash)
@@ -181,8 +191,11 @@ class LibraryStore {
     if (!await inboxDir.exists()) {
       return [];
     }
-    final files =
-        inboxDir.listSync().whereType<File>().map((file) => file.path).toList();
+    final files = inboxDir
+        .listSync()
+        .whereType<File>()
+        .map((file) => file.path)
+        .toList();
     if (files.isEmpty) return [];
     final imported = await importFiles(files);
     for (final path in files) {
@@ -205,5 +218,50 @@ class LibraryStore {
   Future<String> _hashFile(File file) async {
     final digest = await sha1.bind(file.openRead()).first;
     return digest.toString();
+  }
+
+  bool _normalizeLoadedBookPaths() {
+    var changed = false;
+    for (final book in _state.books) {
+      final normalized = _normalizeBookPath(book.path);
+      if (normalized != book.path) {
+        book.path = normalized;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  String _normalizeBookPath(String storedPath) {
+    if (storedPath.isEmpty) {
+      return storedPath;
+    }
+    if (!p.isAbsolute(storedPath)) {
+      return p.normalize(p.join(_rootDir.path, storedPath));
+    }
+
+    final currentBooksRoot = p.normalize(_booksDir.path);
+    final normalizedStoredPath = p.normalize(storedPath);
+    if (p.isWithin(currentBooksRoot, normalizedStoredPath)) {
+      return normalizedStoredPath;
+    }
+
+    final candidate = p.join(_booksDir.path, p.basename(storedPath));
+    if (File(candidate).existsSync()) {
+      return p.normalize(candidate);
+    }
+    return normalizedStoredPath;
+  }
+
+  String _toStoredBookPath(Book book) {
+    final absolutePath = _absoluteBookPath(book);
+    if (p.isWithin(_rootDir.path, absolutePath)) {
+      return p.relative(absolutePath, from: _rootDir.path);
+    }
+    return absolutePath;
+  }
+
+  String _absoluteBookPath(Book book) {
+    return _normalizeBookPath(book.path);
   }
 }

@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 
+import 'app_storage.dart';
 import 'pdf_text_api_store.dart';
 
 class PdfTextCachedPage {
@@ -80,7 +80,7 @@ class PdfTextPageCacheStore {
     required String bookId,
     required PdfTextApiSettings settings,
   }) async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await AppStorage.instance.rootDir();
     final key = _cacheKey(settings);
     final safeBookId = bookId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
     final filename = 'pdf-text-$safeBookId-$key.json';

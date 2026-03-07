@@ -6,10 +6,10 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/library.dart';
 import '../../services/library_store.dart';
+import '../../services/persistent_kv_store.dart';
 import '../../services/pdf_page_ocr_service.dart';
 import '../../services/pdf_page_text_extractor.dart';
 import '../../services/pdf_text_api_store.dart';
@@ -81,9 +81,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   Future<void> _load() async {
     final settings = await _settingsStore.load();
     final apiSettings = await _pdfApiStore.load();
-    final prefs = await SharedPreferences.getInstance();
+    final store = PersistentKvStore.instance;
     final restoreTextMode =
-        prefs.getBool('$_modeKeyPrefix${widget.book.id}') ?? false;
+        await store.getBool('$_modeKeyPrefix${widget.book.id}') ?? false;
     final initialPage = (widget.book.lastPage ?? 1).clamp(1, 999999);
     final controller = PdfController(
       document: PdfDocument.openFile(widget.book.path),
@@ -631,8 +631,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   }
 
   Future<void> _persistReaderMode(bool textMode) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('$_modeKeyPrefix${widget.book.id}', textMode);
+    await PersistentKvStore.instance.setBool(
+      '$_modeKeyPrefix${widget.book.id}',
+      textMode,
+    );
   }
 
   Future<List<int>?> _renderPageAsPngBytes(int pageNumber) async {

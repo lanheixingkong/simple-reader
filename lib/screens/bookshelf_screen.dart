@@ -3,11 +3,11 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/library.dart';
 import '../services/cover_service.dart';
 import '../services/library_store.dart';
+import '../services/persistent_kv_store.dart';
 import 'reader_screen.dart';
 
 class BookshelfScreen extends StatefulWidget {
@@ -43,11 +43,11 @@ class _BookshelfScreenState extends State<BookshelfScreen>
   }
 
   Future<void> _maybeShowFirstUseGuide() async {
-    final prefs = await SharedPreferences.getInstance();
-    final seen = prefs.getBool(_usageGuideSeenKey) ?? false;
+    final store = PersistentKvStore.instance;
+    final seen = await store.getBool(_usageGuideSeenKey) ?? false;
     if (seen || !mounted) return;
     await _showUsageGuide();
-    await prefs.setBool(_usageGuideSeenKey, true);
+    await store.setBool(_usageGuideSeenKey, true);
   }
 
   Future<void> _showUsageGuide() async {

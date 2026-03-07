@@ -51,7 +51,7 @@ class Book {
 
   final String id;
   final String title;
-  final String path;
+  String path;
   final BookFormat format;
   final int addedAt;
   String? folderId;
@@ -60,77 +60,77 @@ class Book {
   double? lastProgress;
   String? hash;
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'title': title,
-        'path': path,
-        'format': format.extensionLabel,
-        'addedAt': addedAt,
-        'folderId': folderId,
-        'lastPage': lastPage,
-        'lastOffset': lastOffset,
-        'lastProgress': lastProgress,
-        'hash': hash,
-      };
+  Map<String, dynamic> toJson({String? pathOverride}) => {
+    'id': id,
+    'title': title,
+    'path': pathOverride ?? path,
+    'format': format.extensionLabel,
+    'addedAt': addedAt,
+    'folderId': folderId,
+    'lastPage': lastPage,
+    'lastOffset': lastOffset,
+    'lastProgress': lastProgress,
+    'hash': hash,
+  };
 
   static Book fromJson(Map<String, dynamic> json) => Book(
-        id: json['id'] as String,
-        title: json['title'] as String,
-        path: json['path'] as String,
-        format: BookFormat.values.firstWhere(
-          (format) => format.extensionLabel == json['format'],
-          orElse: () => BookFormat.txt,
-        ),
-        addedAt: json['addedAt'] as int,
-        folderId: json['folderId'] as String?,
-        lastPage: json['lastPage'] as int?,
-        lastOffset: (json['lastOffset'] as num?)?.toDouble(),
-        lastProgress: (json['lastProgress'] as num?)?.toDouble(),
-        hash: json['hash'] as String?,
-      );
+    id: json['id'] as String,
+    title: json['title'] as String,
+    path: json['path'] as String,
+    format: BookFormat.values.firstWhere(
+      (format) => format.extensionLabel == json['format'],
+      orElse: () => BookFormat.txt,
+    ),
+    addedAt: json['addedAt'] as int,
+    folderId: json['folderId'] as String?,
+    lastPage: json['lastPage'] as int?,
+    lastOffset: (json['lastOffset'] as num?)?.toDouble(),
+    lastProgress: (json['lastProgress'] as num?)?.toDouble(),
+    hash: json['hash'] as String?,
+  );
 }
 
 class Folder {
-  Folder({
-    required this.id,
-    required this.name,
-    required this.createdAt,
-  });
+  Folder({required this.id, required this.name, required this.createdAt});
 
   final String id;
   final String name;
   final int createdAt;
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'createdAt': createdAt,
-      };
+    'id': id,
+    'name': name,
+    'createdAt': createdAt,
+  };
 
   static Folder fromJson(Map<String, dynamic> json) => Folder(
-        id: json['id'] as String,
-        name: json['name'] as String,
-        createdAt: json['createdAt'] as int,
-      );
+    id: json['id'] as String,
+    name: json['name'] as String,
+    createdAt: json['createdAt'] as int,
+  );
 }
 
 class LibraryState {
-  LibraryState({
-    required this.books,
-    required this.folders,
-  });
+  LibraryState({required this.books, required this.folders});
 
   final List<Book> books;
   final List<Folder> folders;
 
   factory LibraryState.empty() => LibraryState(books: [], folders: []);
 
-  Map<String, dynamic> toJson() => {
-        'books': books.map((book) => book.toJson()).toList(),
-        'folders': folders.map((folder) => folder.toJson()).toList(),
-      };
+  Map<String, dynamic> toJson({String Function(Book book)? pathResolver}) => {
+    'books': books
+        .map(
+          (book) => book.toJson(
+            pathOverride: pathResolver == null ? null : pathResolver(book),
+          ),
+        )
+        .toList(),
+    'folders': folders.map((folder) => folder.toJson()).toList(),
+  };
 
-  String toRawJson() => jsonEncode(toJson());
+  String toRawJson({String Function(Book book)? pathResolver}) =>
+      jsonEncode(toJson(pathResolver: pathResolver));
 
   static LibraryState? tryFromRawJson(String raw) {
     final normalized = raw.trim();
@@ -147,15 +147,15 @@ class LibraryState {
       final foldersRaw = json['folders'];
       final books = booksRaw is List
           ? booksRaw
-              .whereType<Map>()
-              .map((item) => Book.fromJson(Map<String, dynamic>.from(item)))
-              .toList()
+                .whereType<Map>()
+                .map((item) => Book.fromJson(Map<String, dynamic>.from(item)))
+                .toList()
           : <Book>[];
       final folders = foldersRaw is List
           ? foldersRaw
-              .whereType<Map>()
-              .map((item) => Folder.fromJson(Map<String, dynamic>.from(item)))
-              .toList()
+                .whereType<Map>()
+                .map((item) => Folder.fromJson(Map<String, dynamic>.from(item)))
+                .toList()
           : <Folder>[];
       return LibraryState(books: books, folders: folders);
     } catch (_) {

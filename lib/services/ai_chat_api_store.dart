@@ -1,4 +1,4 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'persistent_kv_store.dart';
 
 enum AiChatApiProvider { openai, aliyun, glm, deepseek }
 
@@ -118,33 +118,34 @@ class AiChatApiStore {
   static const _temperatureKey = 'ai_chat_temperature';
 
   Future<AiChatApiSettings> load() async {
-    final prefs = await SharedPreferences.getInstance();
+    final store = PersistentKvStore.instance;
     final providerName =
-        prefs.getString(_providerKey) ?? AiChatApiProvider.openai.name;
+        await store.getString(_providerKey) ?? AiChatApiProvider.openai.name;
     final provider = AiChatApiProvider.values.firstWhere(
       (item) => item.name == providerName,
       orElse: () => AiChatApiProvider.openai,
     );
     final defaults = AiChatApiSettings.defaults();
-    final savedTemperature = prefs.getDouble(_temperatureKey);
+    final savedTemperature = await store.getDouble(_temperatureKey);
     return AiChatApiSettings(
       provider: provider,
-      baseUrl: prefs.getString(_baseUrlKey) ?? defaults.baseUrl,
-      model: prefs.getString(_modelKey) ?? defaults.model,
-      apiKey: prefs.getString(_apiKeyKey) ?? defaults.apiKey,
-      systemPrompt: prefs.getString(_systemPromptKey) ?? defaults.systemPrompt,
+      baseUrl: await store.getString(_baseUrlKey) ?? defaults.baseUrl,
+      model: await store.getString(_modelKey) ?? defaults.model,
+      apiKey: await store.getString(_apiKeyKey) ?? defaults.apiKey,
+      systemPrompt:
+          await store.getString(_systemPromptKey) ?? defaults.systemPrompt,
       temperature: (savedTemperature ?? defaults.temperature).clamp(0.0, 1.5),
     );
   }
 
   Future<void> save(AiChatApiSettings settings) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_providerKey, settings.provider.name);
-    await prefs.setString(_baseUrlKey, settings.baseUrl);
-    await prefs.setString(_modelKey, settings.model);
-    await prefs.setString(_apiKeyKey, settings.apiKey);
-    await prefs.setString(_systemPromptKey, settings.systemPrompt);
-    await prefs.setDouble(
+    final store = PersistentKvStore.instance;
+    await store.setString(_providerKey, settings.provider.name);
+    await store.setString(_baseUrlKey, settings.baseUrl);
+    await store.setString(_modelKey, settings.model);
+    await store.setString(_apiKeyKey, settings.apiKey);
+    await store.setString(_systemPromptKey, settings.systemPrompt);
+    await store.setDouble(
       _temperatureKey,
       settings.temperature.clamp(0.0, 1.5),
     );

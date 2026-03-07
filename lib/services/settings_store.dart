@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
+import 'persistent_kv_store.dart';
 
 enum ReaderTheme { light, sepia, mint, slate, dark }
 
 class ReaderSettings {
-  const ReaderSettings({
-    required this.fontSize,
-    required this.theme,
-  });
+  const ReaderSettings({required this.fontSize, required this.theme});
 
   final double fontSize;
   final ReaderTheme theme;
@@ -29,9 +27,9 @@ class SettingsStore {
   static const _themeKey = 'reader_theme';
 
   Future<ReaderSettings> load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final fontSize = prefs.getDouble(_fontSizeKey) ?? 18;
-    final themeName = prefs.getString(_themeKey) ?? 'light';
+    final store = PersistentKvStore.instance;
+    final fontSize = await store.getDouble(_fontSizeKey) ?? 18;
+    final themeName = await store.getString(_themeKey) ?? 'light';
     final theme = ReaderTheme.values.firstWhere(
       (item) => item.name == themeName,
       orElse: () => ReaderTheme.light,
@@ -40,9 +38,9 @@ class SettingsStore {
   }
 
   Future<void> save(ReaderSettings settings) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble(_fontSizeKey, settings.fontSize);
-    await prefs.setString(_themeKey, settings.theme.name);
+    final store = PersistentKvStore.instance;
+    await store.setDouble(_fontSizeKey, settings.fontSize);
+    await store.setString(_themeKey, settings.theme.name);
   }
 
   static Color backgroundFor(ReaderTheme theme) {

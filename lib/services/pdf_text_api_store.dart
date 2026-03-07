@@ -1,4 +1,4 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'persistent_kv_store.dart';
 
 enum PdfTextApiProvider { openai, aliyun, glm }
 
@@ -163,9 +163,9 @@ class PdfTextApiStore {
   static const _prefetchPagesKey = 'pdf_text_prefetch_pages';
 
   Future<PdfTextApiSettings> load() async {
-    final prefs = await SharedPreferences.getInstance();
+    final store = PersistentKvStore.instance;
     final providerName =
-        prefs.getString(_providerKey) ?? PdfTextApiProvider.openai.name;
+        await store.getString(_providerKey) ?? PdfTextApiProvider.openai.name;
     final provider = PdfTextApiProvider.values.firstWhere(
       (item) => item.name == providerName,
       orElse: () => PdfTextApiProvider.openai,
@@ -173,35 +173,38 @@ class PdfTextApiStore {
     final defaults = PdfTextApiSettings.defaults();
     return PdfTextApiSettings(
       provider: provider,
-      baseUrl: prefs.getString(_baseUrlKey) ?? defaults.baseUrl,
-      model: prefs.getString(_modelKey) ?? defaults.model,
-      apiKey: prefs.getString(_apiKeyKey) ?? defaults.apiKey,
-      apiSecret: prefs.getString(_apiSecretKey) ?? defaults.apiSecret,
-      secretId: prefs.getString(_secretIdKey) ?? defaults.secretId,
-      secretKey: prefs.getString(_secretKeyKey) ?? defaults.secretKey,
+      baseUrl: await store.getString(_baseUrlKey) ?? defaults.baseUrl,
+      model: await store.getString(_modelKey) ?? defaults.model,
+      apiKey: await store.getString(_apiKeyKey) ?? defaults.apiKey,
+      apiSecret: await store.getString(_apiSecretKey) ?? defaults.apiSecret,
+      secretId: await store.getString(_secretIdKey) ?? defaults.secretId,
+      secretKey: await store.getString(_secretKeyKey) ?? defaults.secretKey,
       tencentRegion:
-          prefs.getString(_tencentRegionKey) ?? defaults.tencentRegion,
-      baiduAuthUrl: prefs.getString(_baiduAuthUrlKey) ?? defaults.baiduAuthUrl,
-      baiduOcrUrl: prefs.getString(_baiduOcrUrlKey) ?? defaults.baiduOcrUrl,
-      prompt: prefs.getString(_promptKey) ?? defaults.prompt,
-      prefetchPages: (prefs.getInt(_prefetchPagesKey) ?? defaults.prefetchPages)
-          .clamp(0, 50),
+          await store.getString(_tencentRegionKey) ?? defaults.tencentRegion,
+      baiduAuthUrl:
+          await store.getString(_baiduAuthUrlKey) ?? defaults.baiduAuthUrl,
+      baiduOcrUrl:
+          await store.getString(_baiduOcrUrlKey) ?? defaults.baiduOcrUrl,
+      prompt: await store.getString(_promptKey) ?? defaults.prompt,
+      prefetchPages:
+          ((await store.getInt(_prefetchPagesKey)) ?? defaults.prefetchPages)
+              .clamp(0, 50),
     );
   }
 
   Future<void> save(PdfTextApiSettings settings) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_providerKey, settings.provider.name);
-    await prefs.setString(_baseUrlKey, settings.baseUrl);
-    await prefs.setString(_modelKey, settings.model);
-    await prefs.setString(_apiKeyKey, settings.apiKey);
-    await prefs.setString(_apiSecretKey, settings.apiSecret);
-    await prefs.setString(_secretIdKey, settings.secretId);
-    await prefs.setString(_secretKeyKey, settings.secretKey);
-    await prefs.setString(_tencentRegionKey, settings.tencentRegion);
-    await prefs.setString(_baiduAuthUrlKey, settings.baiduAuthUrl);
-    await prefs.setString(_baiduOcrUrlKey, settings.baiduOcrUrl);
-    await prefs.setString(_promptKey, settings.prompt);
-    await prefs.setInt(_prefetchPagesKey, settings.prefetchPages.clamp(0, 50));
+    final store = PersistentKvStore.instance;
+    await store.setString(_providerKey, settings.provider.name);
+    await store.setString(_baseUrlKey, settings.baseUrl);
+    await store.setString(_modelKey, settings.model);
+    await store.setString(_apiKeyKey, settings.apiKey);
+    await store.setString(_apiSecretKey, settings.apiSecret);
+    await store.setString(_secretIdKey, settings.secretId);
+    await store.setString(_secretKeyKey, settings.secretKey);
+    await store.setString(_tencentRegionKey, settings.tencentRegion);
+    await store.setString(_baiduAuthUrlKey, settings.baiduAuthUrl);
+    await store.setString(_baiduOcrUrlKey, settings.baiduOcrUrl);
+    await store.setString(_promptKey, settings.prompt);
+    await store.setInt(_prefetchPagesKey, settings.prefetchPages.clamp(0, 50));
   }
 }

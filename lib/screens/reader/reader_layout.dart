@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../models/library.dart';
+import '../../services/persistent_kv_store.dart';
 import '../../services/settings_store.dart';
 
 class ReaderLayout extends StatefulWidget {
@@ -39,11 +39,11 @@ class _ReaderLayoutState extends State<ReaderLayout> {
   }
 
   Future<void> _maybeShowFirstUseGuide() async {
-    final prefs = await SharedPreferences.getInstance();
-    final seen = prefs.getBool(_readerGuideSeenKey) ?? false;
+    final store = PersistentKvStore.instance;
+    final seen = await store.getBool(_readerGuideSeenKey) ?? false;
     if (seen || !mounted) return;
     await _showUsageGuide();
-    await prefs.setBool(_readerGuideSeenKey, true);
+    await store.setBool(_readerGuideSeenKey, true);
   }
 
   Future<void> _showUsageGuide() async {
