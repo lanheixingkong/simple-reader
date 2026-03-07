@@ -12,6 +12,7 @@ import '../../services/ai_chat_api_store.dart';
 import '../../services/book_translation_cache_store.dart';
 import '../../services/book_translation_service.dart';
 import '../../services/library_store.dart';
+import '../../services/persistent_kv_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'ai_chat_screen.dart';
@@ -31,6 +32,8 @@ class EpubReaderScreen extends StatefulWidget {
 
 class _EpubReaderScreenState extends State<EpubReaderScreen>
     with WidgetsBindingObserver {
+  static const _translationModeKeyPrefix = 'epub_translation_mode_';
+
   final _store = LibraryStore.instance;
   final _settingsStore = SettingsStore.instance;
   final _aiApiStore = AiChatApiStore.instance;
@@ -54,13 +57,16 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   final Map<int, GlobalKey> _scrollKeys = {};
   final Map<String, String> _translations = {};
   final Set<int> _translatingChapters = <int>{};
+  final Map<int, Future<void>> _inFlightTranslations = <int, Future<void>>{};
   String _selectedText = '';
   final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
   Timer? _translationSaveTimer;
+  Future<void> _translationQueue = Future<void>.value();
   bool _progressDirty = false;
   bool _savingProgress = false;
+  bool _translationEnabled = false;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   String? _loadError;
 
@@ -101,6 +107,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     try {
       final settings = await _settingsStore.load();
       final translationSettings = await _loadTranslationSettings();
+      final translationEnabled =
+          await PersistentKvStore.instance.getBool(
+            '$_translationModeKeyPrefix${widget.book.id}',
+          ) ??
+          false;
       final bytes = await File(widget.book.path).readAsBytes();
       final bookRef = await EpubReader.openBook(bytes);
       final chapterRefs = await bookRef.getChapters();
@@ -131,11 +142,15 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             settings: translationSettings,
           ),
         );
+      _translationEnabled = translationEnabled;
       _loadError = null;
       if (mounted) {
         setState(() {});
       }
       _warmChapter(safeInitial);
+      if (_translationEnabled) {
+        _enqueueTranslationAround(centerChapter: safeInitial);
+      }
     } catch (e) {
       _loadError = '无法打开这本 EPUB：$e';
       if (mounted) {
@@ -270,6 +285,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       if (index == null) return;
       setState(() => _currentChapter = index);
       _pageController?.jumpToPage(index);
+      if (_translationEnabled) {
+        _enqueueTranslationAround(centerChapter: index);
+      }
     });
   }
 
@@ -351,8 +369,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                     height: 18,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.translate),
-            tooltip: '翻译本章',
+                : Icon(
+                    _translationEnabled ? Icons.translate : Icons.g_translate,
+                  ),
+            tooltip: _translationEnabled ? '自动翻译已开启' : '开启自动翻译',
           ),
         ],
         child: ReaderTapZones(
@@ -370,6 +390,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                     _chapterProgress.putIfAbsent(index, () => 0.0);
                     _scheduleProgressSave();
                     _warmChapter(index);
+                    if (_translationEnabled) {
+                      _enqueueTranslationAround(centerChapter: index);
+                    }
                   },
                   itemCount: _chapters.length,
                   itemBuilder: (context, index) =>
@@ -748,62 +771,24 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   Future<void> _translateCurrentChapter() async {
-    final settings = await _loadTranslationSettings(refresh: true);
-    final cacheKey = _chapters[_currentChapter].cacheKey;
-    final blocks = _chapterBlocksCache[cacheKey];
-    if (blocks == null || blocks.isEmpty) {
-      _showSnack('当前章节尚未加载完成');
-      return;
-    }
-    final paragraphs = blocks
-        .map((block) => block.text?.trim() ?? '')
-        .where((text) => text.isNotEmpty)
-        .toList();
-    if (paragraphs.isEmpty) {
-      _showSnack('当前章节没有可翻译的文字');
-      return;
-    }
-    final hasNonChinese = paragraphs.any(
-      (text) => !_translationService.isLikelyChinese(text),
-    );
-    if (!hasNonChinese) {
-      _showSnack('当前章节已是中文，不需要翻译');
-      return;
-    }
-    final missing = paragraphs.where((text) {
-      if (_translationService.isLikelyChinese(text)) return false;
-      return !_translations.containsKey(_translationService.paragraphKey(text));
-    }).toList();
-    if (missing.isEmpty) {
-      setState(() {});
-      _showSnack('当前章节已使用缓存翻译');
-      return;
-    }
-    setState(() {
-      _translatingChapters.add(_currentChapter);
-    });
-    try {
-      final translated = await _translationService.translateParagraphs(
-        settings: settings,
-        paragraphs: missing,
+    if (!_translationEnabled) {
+      _translationEnabled = true;
+      unawaited(
+        PersistentKvStore.instance.setBool(
+          '$_translationModeKeyPrefix${widget.book.id}',
+          true,
+        ),
       );
-      if (translated.isEmpty) {
-        _showSnack('没有得到可用的翻译结果');
-        return;
+      if (mounted) {
+        setState(() {});
       }
-      _translations.addAll(translated);
-      _schedulePersistTranslations();
-      if (!mounted) return;
-      setState(() {});
+    }
+    try {
+      await _translateChapterIfNeeded(_currentChapter, forceRefresh: true);
     } catch (error) {
       _showSnack('翻译失败：$error');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _translatingChapters.remove(_currentChapter);
-        });
-      }
     }
+    _enqueueTranslationAround(centerChapter: _currentChapter);
   }
 
   Future<AiChatApiSettings> _loadTranslationSettings({
@@ -849,6 +834,112 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       settings: settings,
       entries: _translations,
     );
+  }
+
+  void _enqueueTranslationAround({required int centerChapter}) {
+    _translationQueue = _translationQueue.then((_) async {
+      if (_chapters.isEmpty) return;
+      final last = _chapters.length - 1;
+      final targets = <int>{
+        centerChapter.clamp(0, last),
+        (centerChapter - 1).clamp(0, last),
+        (centerChapter + 1).clamp(0, last),
+      }.toList()..sort();
+      for (final index in targets) {
+        if (!_translationEnabled) return;
+        try {
+          await _translateChapterIfNeeded(index, forceRefresh: false);
+        } catch (_) {
+          // Ignore background translation errors for adjacent chapters.
+        }
+      }
+    });
+  }
+
+  Future<void> _translateChapterIfNeeded(
+    int chapterIndex, {
+    required bool forceRefresh,
+  }) {
+    final inFlight = _inFlightTranslations[chapterIndex];
+    if (inFlight != null) return inFlight;
+    final future = _translateChapterIfNeededInternal(
+      chapterIndex,
+      forceRefresh: forceRefresh,
+    );
+    _inFlightTranslations[chapterIndex] = future;
+    return future.whenComplete(
+      () => _inFlightTranslations.remove(chapterIndex),
+    );
+  }
+
+  Future<void> _translateChapterIfNeededInternal(
+    int chapterIndex, {
+    required bool forceRefresh,
+  }) async {
+    if (chapterIndex < 0 || chapterIndex >= _chapters.length) return;
+    final bookRef = _bookRef;
+    final settings = _settings;
+    if (bookRef == null || settings == null) return;
+    final chapter = _chapters[chapterIndex];
+    final html = await _chapterHtmlCache.putIfAbsent(
+      chapter.cacheKey,
+      () => _buildChapterHtml(bookRef, settings, chapter),
+    );
+    final blocks = _chapterBlocksCache.putIfAbsent(
+      chapter.cacheKey,
+      () => _parseHtmlBlocks(html.isEmpty ? '<p></p>' : html),
+    );
+    final paragraphs = blocks
+        .map((block) => block.text?.trim() ?? '')
+        .where((text) => text.isNotEmpty)
+        .toList();
+    if (paragraphs.isEmpty) return;
+    final hasNonChinese = paragraphs.any(
+      (text) => !_translationService.isLikelyChinese(text),
+    );
+    if (!hasNonChinese) {
+      if (chapterIndex == _currentChapter && mounted) {
+        setState(() {});
+      }
+      return;
+    }
+    final missing = paragraphs.where((text) {
+      if (_translationService.isLikelyChinese(text)) return false;
+      return !_translations.containsKey(_translationService.paragraphKey(text));
+    }).toList();
+    if (missing.isEmpty) {
+      if (chapterIndex == _currentChapter && mounted) {
+        setState(() {});
+      }
+      return;
+    }
+    final translationSettings = await _loadTranslationSettings(
+      refresh: forceRefresh,
+    );
+    if (mounted) {
+      setState(() {
+        _translatingChapters.add(chapterIndex);
+      });
+    } else {
+      _translatingChapters.add(chapterIndex);
+    }
+    try {
+      final translated = await _translationService.translateParagraphs(
+        settings: translationSettings,
+        paragraphs: missing,
+      );
+      if (translated.isEmpty) return;
+      _translations.addAll(translated);
+      _schedulePersistTranslations();
+      if (chapterIndex == _currentChapter && mounted) {
+        setState(() {});
+      }
+    } finally {
+      _translatingChapters.remove(chapterIndex);
+      if (chapterIndex == _currentChapter && mounted) {
+        setState(() {});
+      }
+    }
   }
 
   Future<void> _openAiChat({String? quote}) async {

@@ -9,6 +9,7 @@ import '../../services/ai_chat_api_store.dart';
 import '../../services/book_translation_cache_store.dart';
 import '../../services/book_translation_service.dart';
 import '../../services/library_store.dart';
+import '../../services/persistent_kv_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'ai_chat_screen.dart';
@@ -27,6 +28,8 @@ class TextReaderScreen extends StatefulWidget {
 }
 
 class _TextReaderScreenState extends State<TextReaderScreen> {
+  static const _translationModeKeyPrefix = 'text_translation_mode_';
+
   final _store = LibraryStore.instance;
   final _settingsStore = SettingsStore.instance;
   final _aiApiStore = AiChatApiStore.instance;
@@ -40,6 +43,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   List<String> _paragraphs = const [];
   final Map<String, String> _translations = <String, String>{};
   bool _translating = false;
+  bool _translationEnabled = false;
   bool _loaded = false;
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
@@ -49,6 +53,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   String _selectedText = '';
+  Future<void> _translationQueue = Future<void>.value();
 
   @override
   void initState() {
@@ -72,6 +77,11 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
   Future<void> _load() async {
     final settings = await _settingsStore.load();
     final translationSettings = await _loadTranslationSettings();
+    final translationEnabled =
+        await PersistentKvStore.instance.getBool(
+          '$_translationModeKeyPrefix${widget.book.id}',
+        ) ??
+        false;
     final raw = await File(widget.book.path).readAsString();
     _settings = settings;
     _translationSettings = translationSettings;
@@ -85,6 +95,7 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
           settings: translationSettings,
         ),
       );
+    _translationEnabled = translationEnabled;
     _loaded = true;
     _scrollController = ScrollController(
       initialScrollOffset: widget.book.lastOffset ?? 0,
@@ -103,6 +114,9 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
           controller.jumpTo(target);
         }
       });
+    }
+    if (_translationEnabled) {
+      _enqueueTranslateAll(forceRefresh: false);
     }
   }
 
@@ -219,8 +233,8 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.translate),
-          tooltip: '翻译全文',
+              : Icon(_translationEnabled ? Icons.translate : Icons.g_translate),
+          tooltip: _translationEnabled ? '自动翻译已开启' : '开启自动翻译',
         ),
       ],
       child: ReaderTapZones(
@@ -331,46 +345,87 @@ class _TextReaderScreenState extends State<TextReaderScreen> {
       _showSnack('当前内容没有可翻译的文字');
       return;
     }
+    if (!_translationEnabled) {
+      _translationEnabled = true;
+      unawaited(
+        PersistentKvStore.instance.setBool(
+          '$_translationModeKeyPrefix${widget.book.id}',
+          true,
+        ),
+      );
+      if (mounted) {
+        setState(() {});
+      }
+    }
+    try {
+      await _translateMissingParagraphs(
+        forceRefresh: true,
+        notifyIfChinese: true,
+      );
+    } catch (error) {
+      _showSnack('翻译失败：$error');
+    }
+    _enqueueTranslateAll(forceRefresh: false);
+  }
+
+  void _enqueueTranslateAll({required bool forceRefresh}) {
+    _translationQueue = _translationQueue.then(
+      (_) => _translateMissingParagraphs(
+        forceRefresh: forceRefresh,
+        notifyIfChinese: false,
+      ),
+    );
+  }
+
+  Future<void> _translateMissingParagraphs({
+    required bool forceRefresh,
+    required bool notifyIfChinese,
+  }) async {
     final hasNonChinese = _paragraphs.any(
       (item) => !_translationService.isLikelyChinese(item),
     );
     if (!hasNonChinese) {
-      _showSnack('当前内容已是中文，不需要翻译');
+      if (notifyIfChinese) {
+        _showSnack('当前内容已是中文，不需要翻译');
+      }
       return;
     }
-    final settings = await _loadTranslationSettings(refresh: true);
+    final settings = await _loadTranslationSettings(refresh: forceRefresh);
     final missing = _paragraphs.where((item) {
       if (_translationService.isLikelyChinese(item)) return false;
       return !_translations.containsKey(_translationService.paragraphKey(item));
     }).toList();
     if (missing.isEmpty) {
-      setState(() {});
-      _showSnack('当前内容已使用缓存翻译');
+      if (mounted) {
+        setState(() {});
+      }
       return;
     }
-    setState(() {
+    if (mounted) {
+      setState(() {
+        _translating = true;
+      });
+    } else {
       _translating = true;
-    });
+    }
     try {
       final translated = await _translationService.translateParagraphs(
         settings: settings,
         paragraphs: missing,
       );
-      if (translated.isEmpty) {
-        _showSnack('没有得到可用的翻译结果');
-        return;
-      }
+      if (translated.isEmpty) return;
       _translations.addAll(translated);
       _schedulePersistTranslations();
-      if (!mounted) return;
-      setState(() {});
-    } catch (error) {
-      _showSnack('翻译失败：$error');
+      if (mounted) {
+        setState(() {});
+      }
     } finally {
       if (mounted) {
         setState(() {
           _translating = false;
         });
+      } else {
+        _translating = false;
       }
     }
   }

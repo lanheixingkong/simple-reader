@@ -35,6 +35,7 @@ class PdfReaderScreen extends StatefulWidget {
 
 class _PdfReaderScreenState extends State<PdfReaderScreen> {
   static const _modeKeyPrefix = 'pdf_reader_mode_';
+  static const _translationModeKeyPrefix = 'pdf_translation_mode_';
 
   final _store = LibraryStore.instance;
   final _settingsStore = SettingsStore.instance;
@@ -57,6 +58,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   final Map<int, _PageTextResult> _pageTextCache = <int, _PageTextResult>{};
   final Map<int, Future<_PageTextResult>> _inFlightTextLoads =
       <int, Future<_PageTextResult>>{};
+  final Map<int, Future<void>> _inFlightTranslations = <int, Future<void>>{};
   final Map<String, String> _translations = <String, String>{};
   final Set<int> _translatingPages = <int>{};
   Timer? _cacheSaveTimer;
@@ -69,7 +71,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   String? _textModeError;
   _PageTextResult? _textModeResult;
   Future<void> _prefetchQueue = Future<void>.value();
+  Future<void> _translationQueue = Future<void>.value();
   String _selectedText = '';
+  bool _translationEnabled = false;
 
   @override
   void initState() {
@@ -97,6 +101,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     final store = PersistentKvStore.instance;
     final restoreTextMode =
         await store.getBool('$_modeKeyPrefix${widget.book.id}') ?? false;
+    final restoreTranslationMode =
+        await store.getBool('$_translationModeKeyPrefix${widget.book.id}') ??
+        false;
     final initialPage = (widget.book.lastPage ?? 1).clamp(1, 999999);
     final controller = PdfController(
       document: PdfDocument.openFile(widget.book.path),
@@ -117,10 +124,14 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
         ),
       );
     _textMode = restoreTextMode;
+    _translationEnabled = restoreTranslationMode;
     unawaited(_refreshTotalPages());
     if (restoreTextMode) {
       unawaited(_loadTextModePage(pageNumber: initialPage));
       _enqueuePrefetch(centerPage: initialPage);
+      if (restoreTranslationMode) {
+        _enqueueTranslationAround(centerPage: initialPage);
+      }
     }
     if (mounted) {
       setState(() {});
@@ -229,8 +240,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                   height: 18,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Icon(Icons.translate),
-          tooltip: '翻译本页',
+              : Icon(_translationEnabled ? Icons.translate : Icons.g_translate),
+          tooltip: _translationEnabled ? '自动翻译已开启' : '开启自动翻译',
         ),
         IconButton(
           onPressed: _openPdfApiSettings,
@@ -383,6 +394,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     });
     await _loadTextModePage(pageNumber: target);
     _ensurePrefetchAround(target);
+    if (_translationEnabled) {
+      _enqueueTranslationAround(centerPage: target);
+    }
   }
 
   Future<void> _openToc() async {
@@ -430,6 +444,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       });
       await _loadTextModePage(pageNumber: target);
       _ensurePrefetchAround(target);
+      if (_translationEnabled) {
+        _enqueueTranslationAround(centerPage: target);
+      }
       return;
     }
     final controller = _controller;
@@ -464,6 +481,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     unawaited(_persistReaderMode(true));
     await _loadTextModePage(pageNumber: currentPage);
     _ensurePrefetchAround(currentPage);
+    if (_translationEnabled) {
+      _enqueueTranslationAround(centerPage: currentPage);
+    }
   }
 
   Future<void> _exitTextMode() async {
@@ -822,58 +842,20 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       _showSnack('PDF 仅在文本模式下支持翻译');
       return;
     }
-    final text = _textModeResult?.text.trim() ?? '';
-    if (text.isEmpty) {
-      _showSnack('当前页面没有可翻译的文本');
-      return;
+    if (!_translationEnabled) {
+      _translationEnabled = true;
+      unawaited(_persistTranslationMode(true));
     }
-    final paragraphs = _translationService.splitParagraphs(text);
-    if (paragraphs.isEmpty) {
-      _showSnack('当前页面没有可翻译的文本');
-      return;
-    }
-    final hasNonChinese = paragraphs.any(
-      (item) => !_translationService.isLikelyChinese(item),
-    );
-    if (!hasNonChinese) {
-      _showSnack('当前页面已是中文，不需要翻译');
-      return;
-    }
-    final settings = await _loadTranslationSettings(refresh: true);
-    final missing = paragraphs.where((item) {
-      if (_translationService.isLikelyChinese(item)) return false;
-      return !_translations.containsKey(_translationService.paragraphKey(item));
-    }).toList();
-    if (missing.isEmpty) {
+    if (mounted) {
       setState(() {});
-      _showSnack('当前页面已使用缓存翻译');
-      return;
     }
-    setState(() {
-      _translatingPages.add(_textModePage);
-    });
     try {
-      final translated = await _translationService.translateParagraphs(
-        settings: settings,
-        paragraphs: missing,
-      );
-      if (translated.isEmpty) {
-        _showSnack('没有得到可用的翻译结果');
-        return;
-      }
-      _translations.addAll(translated);
-      _schedulePersistTranslations();
-      if (!mounted) return;
-      setState(() {});
+      await _translatePageIfNeeded(_textModePage);
     } catch (error) {
       _showSnack('翻译失败：$error');
-    } finally {
-      if (mounted) {
-        setState(() {
-          _translatingPages.remove(_textModePage);
-        });
-      }
+      return;
     }
+    _enqueueTranslationAround(centerPage: _textModePage);
   }
 
   Future<AiChatApiSettings> _loadTranslationSettings({
@@ -919,6 +901,83 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       settings: settings,
       entries: _translations,
     );
+  }
+
+  Future<void> _persistTranslationMode(bool enabled) async {
+    await PersistentKvStore.instance.setBool(
+      '$_translationModeKeyPrefix${widget.book.id}',
+      enabled,
+    );
+  }
+
+  void _enqueueTranslationAround({required int centerPage}) {
+    _translationQueue = _translationQueue.then((_) async {
+      final total = _totalPages;
+      final pages = <int>{
+        centerPage.clamp(1, total),
+        (centerPage - 1).clamp(1, total),
+        (centerPage + 1).clamp(1, total),
+      }.toList()..sort();
+      for (final page in pages) {
+        if (!_translationEnabled) return;
+        try {
+          await _translatePageIfNeeded(page);
+        } catch (_) {
+          // Background translation errors are ignored for adjacent pages.
+        }
+      }
+    });
+  }
+
+  Future<void> _translatePageIfNeeded(int pageNumber) {
+    final inFlight = _inFlightTranslations[pageNumber];
+    if (inFlight != null) return inFlight;
+    final future = _translatePageIfNeededInternal(pageNumber);
+    _inFlightTranslations[pageNumber] = future;
+    return future.whenComplete(() => _inFlightTranslations.remove(pageNumber));
+  }
+
+  Future<void> _translatePageIfNeededInternal(int pageNumber) async {
+    final result = await _loadPageText(pageNumber: pageNumber);
+    final text = result.text.trim();
+    if (text.isEmpty) return;
+    final paragraphs = _translationService.splitParagraphs(text);
+    if (paragraphs.isEmpty) return;
+    final missing = paragraphs.where((item) {
+      if (_translationService.isLikelyChinese(item)) return false;
+      return !_translations.containsKey(_translationService.paragraphKey(item));
+    }).toList();
+    if (missing.isEmpty) {
+      if (pageNumber == _textModePage && mounted) {
+        setState(() {});
+      }
+      return;
+    }
+    final settings = await _loadTranslationSettings(refresh: false);
+    if (mounted) {
+      setState(() {
+        _translatingPages.add(pageNumber);
+      });
+    } else {
+      _translatingPages.add(pageNumber);
+    }
+    try {
+      final translated = await _translationService.translateParagraphs(
+        settings: settings,
+        paragraphs: missing,
+      );
+      if (translated.isEmpty) return;
+      _translations.addAll(translated);
+      _schedulePersistTranslations();
+      if (mounted && pageNumber == _textModePage) {
+        setState(() {});
+      }
+    } finally {
+      _translatingPages.remove(pageNumber);
+      if (mounted && pageNumber == _textModePage) {
+        setState(() {});
+      }
+    }
   }
 
   void _showSnack(String message) {
