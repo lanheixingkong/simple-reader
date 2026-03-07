@@ -8,6 +8,9 @@ import 'package:pdfx/pdfx.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/library.dart';
+import '../../services/ai_chat_api_store.dart';
+import '../../services/book_translation_cache_store.dart';
+import '../../services/book_translation_service.dart';
 import '../../services/library_store.dart';
 import '../../services/persistent_kv_store.dart';
 import '../../services/pdf_page_ocr_service.dart';
@@ -39,16 +42,23 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   final _textCacheStore = PdfTextPageCacheStore.instance;
   final _textExtractor = const PdfPageTextExtractor();
   final _ocrService = PdfPageOcrService();
+  final _aiApiStore = AiChatApiStore.instance;
+  final _translationCacheStore = BookTranslationCacheStore.instance;
+  final _translationService = BookTranslationService();
 
   ReaderSettings? _settings;
   PdfTextApiSettings? _pdfApiSettings;
+  AiChatApiSettings? _translationSettings;
   PdfController? _controller;
   Timer? _saveTimer;
+  Timer? _translationCacheSaveTimer;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
 
   final Map<int, _PageTextResult> _pageTextCache = <int, _PageTextResult>{};
   final Map<int, Future<_PageTextResult>> _inFlightTextLoads =
       <int, Future<_PageTextResult>>{};
+  final Map<String, String> _translations = <String, String>{};
+  final Set<int> _translatingPages = <int>{};
   Timer? _cacheSaveTimer;
 
   bool _textMode = false;
@@ -74,6 +84,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     _controller?.dispose();
     _saveTimer?.cancel();
     _cacheSaveTimer?.cancel();
+    _translationCacheSaveTimer?.cancel();
+    unawaited(_persistTranslations());
     _showChrome.dispose();
     super.dispose();
   }
@@ -81,6 +93,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
   Future<void> _load() async {
     final settings = await _settingsStore.load();
     final apiSettings = await _pdfApiStore.load();
+    final translationSettings = await _loadTranslationSettings();
     final store = PersistentKvStore.instance;
     final restoreTextMode =
         await store.getBool('$_modeKeyPrefix${widget.book.id}') ?? false;
@@ -91,9 +104,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     );
     _settings = settings;
     _pdfApiSettings = apiSettings;
+    _translationSettings = translationSettings;
     _controller = controller;
     _textModePage = initialPage;
     await _loadPersistedTextCache(apiSettings);
+    _translations
+      ..clear()
+      ..addAll(
+        await _translationCacheStore.load(
+          bookId: widget.book.id,
+          settings: translationSettings,
+        ),
+      );
     _textMode = restoreTextMode;
     unawaited(_refreshTotalPages());
     if (restoreTextMode) {
@@ -200,6 +222,17 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           tooltip: 'AI问答',
         ),
         IconButton(
+          onPressed: _isCurrentPageTranslating ? null : _translateCurrentPage,
+          icon: _isCurrentPageTranslating
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.translate),
+          tooltip: '翻译本页',
+        ),
+        IconButton(
           onPressed: _openPdfApiSettings,
           icon: const Icon(Icons.tune_outlined),
           tooltip: 'PDF配置',
@@ -261,6 +294,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       return const Center(child: Text('无文本内容'));
     }
 
+    final paragraphs = _translationService.splitParagraphs(text);
     return SingleChildScrollView(
       key: ValueKey<int>(_textModePage),
       child: SelectionArea(
@@ -287,12 +321,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
             buttonItems: localizedItems,
           );
         },
-        child: Text(
-          text,
-          style: TextStyle(
-            fontSize: (_settings?.fontSize ?? 18) * 0.95,
-            height: 1.65,
-          ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final paragraph in paragraphs)
+              _buildTranslatedParagraph(
+                paragraph,
+                TextStyle(
+                  fontSize: (_settings?.fontSize ?? 18) * 0.95,
+                  height: 1.65,
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -747,6 +787,145 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
         ),
       ),
     );
+  }
+
+  bool get _isCurrentPageTranslating =>
+      _translatingPages.contains(_textModePage);
+
+  Widget _buildTranslatedParagraph(String text, TextStyle style) {
+    final translation = _translations[_translationService.paragraphKey(text)];
+    final hasTranslation =
+        translation != null &&
+        translation.trim().isNotEmpty &&
+        translation.trim() != text.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(text, style: style),
+          if (hasTranslation)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                translation.trim(),
+                style: style.copyWith(fontSize: style.fontSize! * 0.96),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _translateCurrentPage() async {
+    if (!_textMode) {
+      _showSnack('PDF 仅在文本模式下支持翻译');
+      return;
+    }
+    final text = _textModeResult?.text.trim() ?? '';
+    if (text.isEmpty) {
+      _showSnack('当前页面没有可翻译的文本');
+      return;
+    }
+    final paragraphs = _translationService.splitParagraphs(text);
+    if (paragraphs.isEmpty) {
+      _showSnack('当前页面没有可翻译的文本');
+      return;
+    }
+    final hasNonChinese = paragraphs.any(
+      (item) => !_translationService.isLikelyChinese(item),
+    );
+    if (!hasNonChinese) {
+      _showSnack('当前页面已是中文，不需要翻译');
+      return;
+    }
+    final settings = await _loadTranslationSettings(refresh: true);
+    final missing = paragraphs.where((item) {
+      if (_translationService.isLikelyChinese(item)) return false;
+      return !_translations.containsKey(_translationService.paragraphKey(item));
+    }).toList();
+    if (missing.isEmpty) {
+      setState(() {});
+      _showSnack('当前页面已使用缓存翻译');
+      return;
+    }
+    setState(() {
+      _translatingPages.add(_textModePage);
+    });
+    try {
+      final translated = await _translationService.translateParagraphs(
+        settings: settings,
+        paragraphs: missing,
+      );
+      if (translated.isEmpty) {
+        _showSnack('没有得到可用的翻译结果');
+        return;
+      }
+      _translations.addAll(translated);
+      _schedulePersistTranslations();
+      if (!mounted) return;
+      setState(() {});
+    } catch (error) {
+      _showSnack('翻译失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _translatingPages.remove(_textModePage);
+        });
+      }
+    }
+  }
+
+  Future<AiChatApiSettings> _loadTranslationSettings({
+    bool refresh = false,
+  }) async {
+    final current = _translationSettings;
+    if (!refresh && current != null) return current;
+    final loaded = await _aiApiStore.load();
+    final changed =
+        current == null ||
+        current.provider != loaded.provider ||
+        current.effectiveBaseUrl() != loaded.effectiveBaseUrl() ||
+        current.effectiveModel() != loaded.effectiveModel();
+    _translationSettings = loaded;
+    if (changed) {
+      _translations
+        ..clear()
+        ..addAll(
+          await _translationCacheStore.load(
+            bookId: widget.book.id,
+            settings: loaded,
+          ),
+        );
+      if (mounted) {
+        setState(() {});
+      }
+    }
+    return loaded;
+  }
+
+  void _schedulePersistTranslations() {
+    _translationCacheSaveTimer?.cancel();
+    _translationCacheSaveTimer = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_persistTranslations());
+    });
+  }
+
+  Future<void> _persistTranslations() async {
+    final settings = _translationSettings;
+    if (settings == null) return;
+    await _translationCacheStore.saveAll(
+      bookId: widget.book.id,
+      settings: settings,
+      entries: _translations,
+    );
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   ContextMenuButtonItem _localizedMenuItem(ContextMenuButtonItem item) {

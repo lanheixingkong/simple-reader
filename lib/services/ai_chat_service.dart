@@ -131,6 +131,71 @@ class AiChatService {
     }, provider: settings.provider);
   }
 
+  Future<String> simpleCompletion({
+    required AiChatApiSettings settings,
+    required String systemPrompt,
+    required String userPrompt,
+    double temperature = 0.2,
+  }) async {
+    return _withRetry(() async {
+      await _waitForRateLimit();
+      final apiKey = settings.apiKey.trim();
+      if (apiKey.isEmpty) {
+        throw AiChatException(
+          level: AiChatErrorLevel.config,
+          message: '请先配置 API Key',
+          provider: settings.provider,
+        );
+      }
+      final uri = Uri.parse(
+        _joinPath(settings.effectiveBaseUrl(), '/chat/completions'),
+      );
+      final payload = {
+        'model': settings.effectiveModel(),
+        'temperature': temperature.clamp(0, 1.5),
+        'messages': [
+          if (systemPrompt.trim().isNotEmpty)
+            {'role': 'system', 'content': systemPrompt.trim()},
+          {'role': 'user', 'content': userPrompt},
+        ],
+      };
+      final resp = await _postJson(
+        uri,
+        provider: settings.provider,
+        headers: {'Authorization': 'Bearer $apiKey'},
+        payload: payload,
+      );
+      final choices = resp['choices'];
+      if (choices is! List || choices.isEmpty) {
+        throw AiChatException(
+          level: AiChatErrorLevel.response,
+          message: '模型返回为空',
+          provider: settings.provider,
+        );
+      }
+      final first = choices.first;
+      if (first is! Map<String, dynamic>) {
+        throw AiChatException(
+          level: AiChatErrorLevel.response,
+          message: '模型返回格式不正确',
+          provider: settings.provider,
+        );
+      }
+      final message = first['message'];
+      if (message is! Map<String, dynamic>) {
+        throw AiChatException(
+          level: AiChatErrorLevel.response,
+          message: '模型返回格式不正确',
+          provider: settings.provider,
+        );
+      }
+      return _extractMessageText(
+        message['content'],
+        provider: settings.provider,
+      );
+    }, provider: settings.provider);
+  }
+
   Stream<String> streamChatCompletion({
     required AiChatApiSettings settings,
     required List<AiChatMessage> history,

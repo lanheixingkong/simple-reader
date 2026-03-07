@@ -8,6 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
 import '../../models/library.dart';
+import '../../services/ai_chat_api_store.dart';
+import '../../services/book_translation_cache_store.dart';
+import '../../services/book_translation_service.dart';
 import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
@@ -30,8 +33,12 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     with WidgetsBindingObserver {
   final _store = LibraryStore.instance;
   final _settingsStore = SettingsStore.instance;
+  final _aiApiStore = AiChatApiStore.instance;
+  final _translationCacheStore = BookTranslationCacheStore.instance;
+  final _translationService = BookTranslationService();
 
   ReaderSettings? _settings;
+  AiChatApiSettings? _translationSettings;
   EpubBookRef? _bookRef;
   List<_EpubChapterEntry> _chapters = [];
   PageController? _pageController;
@@ -45,10 +52,13 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   final Map<String, List<_HtmlBlock>> _chapterBlocksCache = {};
   final Map<int, List<GlobalKey>> _blockKeys = {};
   final Map<int, GlobalKey> _scrollKeys = {};
+  final Map<String, String> _translations = {};
+  final Set<int> _translatingChapters = <int>{};
   String _selectedText = '';
   final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
+  Timer? _translationSaveTimer;
   bool _progressDirty = false;
   bool _savingProgress = false;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
@@ -70,6 +80,8 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     }
     _saveTimer?.cancel();
     _progressSaveTimer?.cancel();
+    _translationSaveTimer?.cancel();
+    unawaited(_persistTranslations());
     _showChrome.dispose();
     _selectionActive.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -88,6 +100,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   Future<void> _load() async {
     try {
       final settings = await _settingsStore.load();
+      final translationSettings = await _loadTranslationSettings();
       final bytes = await File(widget.book.path).readAsBytes();
       final bookRef = await EpubReader.openBook(bytes);
       final chapterRefs = await bookRef.getChapters();
@@ -105,10 +118,19 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       _pageController?.dispose();
       _pageController = PageController(initialPage: safeInitial);
       _settings = settings;
+      _translationSettings = translationSettings;
       _bookRef = bookRef;
       _chapters = chapters;
       _currentChapter = safeInitial;
       _chapterOffsets[safeInitial] = initialOffset;
+      _translations
+        ..clear()
+        ..addAll(
+          await _translationCacheStore.load(
+            bookId: widget.book.id,
+            settings: translationSettings,
+          ),
+        );
       _loadError = null;
       if (mounted) {
         setState(() {});
@@ -286,10 +308,11 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     if (settings == null || bookRef == null) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return WillPopScope(
-      onWillPop: () async {
-        await _saveProgress();
-        return true;
+    return PopScope(
+      canPop: true,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) return;
+        unawaited(_saveProgress());
       },
       child: ReaderLayout(
         book: widget.book,
@@ -317,6 +340,19 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             onPressed: () => _openAiChat(),
             icon: const Icon(Icons.chat_bubble_outline),
             tooltip: 'AI问答',
+          ),
+          IconButton(
+            onPressed: _isCurrentChapterTranslating
+                ? null
+                : _translateCurrentChapter,
+            icon: _isCurrentChapterTranslating
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.translate),
+            tooltip: '翻译本章',
           ),
         ],
         child: ReaderTapZones(
@@ -550,7 +586,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                 Padding(
                   key: keys[i],
                   padding: const EdgeInsets.only(bottom: 12),
-                  child: Text('${blocks[i].text!}\n', style: textStyle),
+                  child: _buildTranslatedTextBlock(
+                    text: blocks[i].text!,
+                    textStyle: textStyle,
+                  ),
                 ),
           ],
         ),
@@ -674,6 +713,142 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  bool get _isCurrentChapterTranslating =>
+      _translatingChapters.contains(_currentChapter);
+
+  Widget _buildTranslatedTextBlock({
+    required String text,
+    required TextStyle textStyle,
+  }) {
+    final translation = _translations[_translationService.paragraphKey(text)];
+    final hasTranslation =
+        translation != null &&
+        translation.trim().isNotEmpty &&
+        translation.trim() != text.trim();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('$text\n', style: textStyle),
+        if (hasTranslation)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '${translation.trim()}\n',
+              style: textStyle.copyWith(
+                fontSize: textStyle.fontSize != null
+                    ? textStyle.fontSize! * 0.96
+                    : null,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _translateCurrentChapter() async {
+    final settings = await _loadTranslationSettings(refresh: true);
+    final cacheKey = _chapters[_currentChapter].cacheKey;
+    final blocks = _chapterBlocksCache[cacheKey];
+    if (blocks == null || blocks.isEmpty) {
+      _showSnack('当前章节尚未加载完成');
+      return;
+    }
+    final paragraphs = blocks
+        .map((block) => block.text?.trim() ?? '')
+        .where((text) => text.isNotEmpty)
+        .toList();
+    if (paragraphs.isEmpty) {
+      _showSnack('当前章节没有可翻译的文字');
+      return;
+    }
+    final hasNonChinese = paragraphs.any(
+      (text) => !_translationService.isLikelyChinese(text),
+    );
+    if (!hasNonChinese) {
+      _showSnack('当前章节已是中文，不需要翻译');
+      return;
+    }
+    final missing = paragraphs.where((text) {
+      if (_translationService.isLikelyChinese(text)) return false;
+      return !_translations.containsKey(_translationService.paragraphKey(text));
+    }).toList();
+    if (missing.isEmpty) {
+      setState(() {});
+      _showSnack('当前章节已使用缓存翻译');
+      return;
+    }
+    setState(() {
+      _translatingChapters.add(_currentChapter);
+    });
+    try {
+      final translated = await _translationService.translateParagraphs(
+        settings: settings,
+        paragraphs: missing,
+      );
+      if (translated.isEmpty) {
+        _showSnack('没有得到可用的翻译结果');
+        return;
+      }
+      _translations.addAll(translated);
+      _schedulePersistTranslations();
+      if (!mounted) return;
+      setState(() {});
+    } catch (error) {
+      _showSnack('翻译失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _translatingChapters.remove(_currentChapter);
+        });
+      }
+    }
+  }
+
+  Future<AiChatApiSettings> _loadTranslationSettings({
+    bool refresh = false,
+  }) async {
+    final current = _translationSettings;
+    if (!refresh && current != null) return current;
+    final loaded = await _aiApiStore.load();
+    final changed =
+        current == null ||
+        current.provider != loaded.provider ||
+        current.effectiveBaseUrl() != loaded.effectiveBaseUrl() ||
+        current.effectiveModel() != loaded.effectiveModel();
+    _translationSettings = loaded;
+    if (changed) {
+      _translations
+        ..clear()
+        ..addAll(
+          await _translationCacheStore.load(
+            bookId: widget.book.id,
+            settings: loaded,
+          ),
+        );
+      if (mounted) {
+        setState(() {});
+      }
+    }
+    return loaded;
+  }
+
+  void _schedulePersistTranslations() {
+    _translationSaveTimer?.cancel();
+    _translationSaveTimer = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_persistTranslations());
+    });
+  }
+
+  Future<void> _persistTranslations() async {
+    final settings = _translationSettings;
+    if (settings == null) return;
+    await _translationCacheStore.saveAll(
+      bookId: widget.book.id,
+      settings: settings,
+      entries: _translations,
+    );
   }
 
   Future<void> _openAiChat({String? quote}) async {
@@ -1031,10 +1206,6 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       default:
         return 'application/octet-stream';
     }
-  }
-
-  String _colorToCss(Color color) {
-    return 'rgba(${color.red}, ${color.green}, ${color.blue}, ${color.opacity})';
   }
 }
 

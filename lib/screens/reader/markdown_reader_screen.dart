@@ -9,6 +9,9 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 
 import '../../models/library.dart';
+import '../../services/ai_chat_api_store.dart';
+import '../../services/book_translation_cache_store.dart';
+import '../../services/book_translation_service.dart';
 import '../../services/library_store.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
@@ -31,15 +34,23 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     with WidgetsBindingObserver {
   final _store = LibraryStore.instance;
   final _settingsStore = SettingsStore.instance;
+  final _aiApiStore = AiChatApiStore.instance;
+  final _translationCacheStore = BookTranslationCacheStore.instance;
+  final _translationService = BookTranslationService();
 
   ReaderSettings? _settings;
+  AiChatApiSettings? _translationSettings;
   ScrollController? _scrollController;
   String _content = '';
   String _plainText = '';
+  List<String> _paragraphs = const [];
+  final Map<String, String> _translations = <String, String>{};
   Timer? _saveTimer;
   Timer? _progressSaveTimer;
+  Timer? _translationSaveTimer;
   bool _progressDirty = false;
   bool _savingProgress = false;
+  bool _translating = false;
   final ValueNotifier<bool> _showChrome = ValueNotifier<bool>(false);
   final ValueNotifier<bool> _selectionActive = ValueNotifier<bool>(false);
   final List<_TocEntry> _toc = [];
@@ -60,6 +71,8 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     _scrollController?.dispose();
     _saveTimer?.cancel();
     _progressSaveTimer?.cancel();
+    _translationSaveTimer?.cancel();
+    unawaited(_persistTranslations());
     _showChrome.dispose();
     _selectionActive.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -77,9 +90,20 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
 
   Future<void> _load() async {
     final settings = await _settingsStore.load();
+    final translationSettings = await _loadTranslationSettings();
     _settings = settings;
+    _translationSettings = translationSettings;
     _content = await File(widget.book.path).readAsString();
     _plainText = _markdownToPlainText(_content);
+    _paragraphs = _translationService.splitParagraphs(_plainText);
+    _translations
+      ..clear()
+      ..addAll(
+        await _translationCacheStore.load(
+          bookId: widget.book.id,
+          settings: translationSettings,
+        ),
+      );
     _buildToc(_content);
     _scrollController = ScrollController(
       initialScrollOffset: widget.book.lastOffset ?? 0,
@@ -220,7 +244,6 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
       final renderObject = context.findRenderObject();
       if (renderObject == null) return;
       final viewport = RenderAbstractViewport.of(renderObject);
-      if (viewport == null) return;
       final target = viewport.getOffsetToReveal(renderObject, 0.1).offset;
       final max = controller.position.maxScrollExtent;
       controller.animateTo(
@@ -294,6 +317,17 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
           icon: const Icon(Icons.chat_bubble_outline),
           tooltip: 'AI问答',
         ),
+        IconButton(
+          onPressed: _translating ? null : _translateCurrentBook,
+          icon: _translating
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.translate),
+          tooltip: '翻译全文',
+        ),
       ],
       child: ReaderTapZones(
         onTapLeft: _pageUp,
@@ -342,24 +376,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
                   buttonItems: localizedItems,
                 );
               },
-              child: MarkdownBody(
-                data: _content,
-                builders: {
-                  'h1': _HeadingBuilder(_nextHeadingKey),
-                  'h2': _HeadingBuilder(_nextHeadingKey),
-                  'h3': _HeadingBuilder(_nextHeadingKey),
-                  'h4': _HeadingBuilder(_nextHeadingKey),
-                  'h5': _HeadingBuilder(_nextHeadingKey),
-                  'h6': _HeadingBuilder(_nextHeadingKey),
-                },
-                styleSheet: MarkdownStyleSheet(
-                  p: TextStyle(
-                    fontSize: settings.fontSize,
-                    color: foreground,
-                    height: 1.6,
-                  ),
-                ),
-              ),
+              child: _buildContent(settings, foreground),
             ),
           ),
         ),
@@ -369,6 +386,177 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
 
   void _toggleChrome() {
     _showChrome.value = !_showChrome.value;
+  }
+
+  Widget _buildContent(ReaderSettings settings, Color foreground) {
+    if (!_hasAnyTranslation) {
+      _headingKeyCursor = 0;
+      return MarkdownBody(
+        data: _content,
+        builders: {
+          'h1': _HeadingBuilder(_nextHeadingKey),
+          'h2': _HeadingBuilder(_nextHeadingKey),
+          'h3': _HeadingBuilder(_nextHeadingKey),
+          'h4': _HeadingBuilder(_nextHeadingKey),
+          'h5': _HeadingBuilder(_nextHeadingKey),
+          'h6': _HeadingBuilder(_nextHeadingKey),
+        },
+        styleSheet: MarkdownStyleSheet(
+          p: TextStyle(
+            fontSize: settings.fontSize,
+            color: foreground,
+            height: 1.6,
+          ),
+        ),
+      );
+    }
+
+    final style = TextStyle(
+      fontSize: settings.fontSize,
+      color: foreground,
+      height: 1.6,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final paragraph in _paragraphs)
+          _buildTranslatedParagraph(paragraph, style),
+      ],
+    );
+  }
+
+  bool get _hasAnyTranslation => _paragraphs.any(
+    (item) => _translations.containsKey(_translationService.paragraphKey(item)),
+  );
+
+  Widget _buildTranslatedParagraph(String text, TextStyle style) {
+    final translation = _translations[_translationService.paragraphKey(text)];
+    final hasTranslation =
+        translation != null &&
+        translation.trim().isNotEmpty &&
+        translation.trim() != text.trim();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(text, style: style),
+          if (hasTranslation)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                translation.trim(),
+                style: style.copyWith(
+                  fontSize: style.fontSize != null
+                      ? style.fontSize! * 0.96
+                      : null,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _translateCurrentBook() async {
+    if (_paragraphs.isEmpty) {
+      _showSnack('当前内容没有可翻译的文字');
+      return;
+    }
+    final hasNonChinese = _paragraphs.any(
+      (item) => !_translationService.isLikelyChinese(item),
+    );
+    if (!hasNonChinese) {
+      _showSnack('当前内容已是中文，不需要翻译');
+      return;
+    }
+    final settings = await _loadTranslationSettings(refresh: true);
+    final missing = _paragraphs.where((item) {
+      if (_translationService.isLikelyChinese(item)) return false;
+      return !_translations.containsKey(_translationService.paragraphKey(item));
+    }).toList();
+    if (missing.isEmpty) {
+      setState(() {});
+      _showSnack('当前内容已使用缓存翻译');
+      return;
+    }
+    setState(() {
+      _translating = true;
+    });
+    try {
+      final translated = await _translationService.translateParagraphs(
+        settings: settings,
+        paragraphs: missing,
+      );
+      if (translated.isEmpty) {
+        _showSnack('没有得到可用的翻译结果');
+        return;
+      }
+      _translations.addAll(translated);
+      _schedulePersistTranslations();
+      if (!mounted) return;
+      setState(() {});
+    } catch (error) {
+      _showSnack('翻译失败：$error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _translating = false;
+        });
+      }
+    }
+  }
+
+  Future<AiChatApiSettings> _loadTranslationSettings({
+    bool refresh = false,
+  }) async {
+    final current = _translationSettings;
+    if (!refresh && current != null) return current;
+    final loaded = await _aiApiStore.load();
+    final changed =
+        current == null ||
+        current.provider != loaded.provider ||
+        current.effectiveBaseUrl() != loaded.effectiveBaseUrl() ||
+        current.effectiveModel() != loaded.effectiveModel();
+    _translationSettings = loaded;
+    if (changed) {
+      _translations
+        ..clear()
+        ..addAll(
+          await _translationCacheStore.load(
+            bookId: widget.book.id,
+            settings: loaded,
+          ),
+        );
+      if (mounted) {
+        setState(() {});
+      }
+    }
+    return loaded;
+  }
+
+  void _schedulePersistTranslations() {
+    _translationSaveTimer?.cancel();
+    _translationSaveTimer = Timer(const Duration(milliseconds: 500), () {
+      unawaited(_persistTranslations());
+    });
+  }
+
+  Future<void> _persistTranslations() async {
+    final settings = _translationSettings;
+    if (settings == null) return;
+    await _translationCacheStore.saveAll(
+      bookId: widget.book.id,
+      settings: settings,
+      entries: _translations,
+    );
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _pageUp() {
