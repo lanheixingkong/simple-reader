@@ -221,7 +221,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     );
     final media = MediaQuery.of(context);
     return MediaQuery(
-      data: media.copyWith(textScaleFactor: 1.0),
+      data: media.copyWith(textScaler: const TextScaler.linear(1.0)),
       child: Container(
         width: cardWidth,
         height: contentHeight,
@@ -229,7 +229,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
           color: template.background,
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.08),
+              color: Colors.black.withValues(alpha: 0.08),
               blurRadius: 24,
               offset: const Offset(0, 12),
             ),
@@ -255,14 +255,17 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
                 const SizedBox(height: _paragraphSpacing),
             ],
             const SizedBox(height: _footerTopSpacing),
-            Container(height: 1, color: template.accentColor.withOpacity(0.6)),
+            Container(
+              height: 1,
+              color: template.accentColor.withValues(alpha: 0.6),
+            ),
             const SizedBox(height: _footerDividerSpacing),
             Text(
               '《${widget.title}》',
               style: TextStyle(
                 fontSize: 14,
                 fontWeight: FontWeight.w600,
-                color: template.textColor.withOpacity(0.85),
+                color: template.textColor.withValues(alpha: 0.85),
               ),
             ),
             const SizedBox(height: _footerTitleSpacing),
@@ -270,7 +273,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
               widget.author,
               style: TextStyle(
                 fontSize: 13,
-                color: template.textColor.withOpacity(0.7),
+                color: template.textColor.withValues(alpha: 0.7),
               ),
             ),
           ],
@@ -608,9 +611,9 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       TextStyle(
         fontSize: 14,
         fontWeight: FontWeight.w600,
-        color: template.textColor.withOpacity(0.85),
+        color: template.textColor.withValues(alpha: 0.85),
       ),
-      TextStyle(fontSize: 13, color: template.textColor.withOpacity(0.7)),
+      TextStyle(fontSize: 13, color: template.textColor.withValues(alpha: 0.7)),
     );
     final targetHeight = _cardVerticalPadding * 2 + textHeight + footerHeight;
     return targetHeight.clamp(260.0, maxCardHeight);
@@ -659,7 +662,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     }
     final footerTop = paragraphTop + _footerTopSpacing;
     final dividerPaint = Paint()
-      ..color = template.accentColor.withOpacity(0.6)
+      ..color = template.accentColor.withValues(alpha: 0.6)
       ..strokeWidth = 1;
     canvas.drawLine(
       Offset(_cardHorizontalPadding, footerTop),
@@ -672,7 +675,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
         style: TextStyle(
           fontSize: 14,
           fontWeight: FontWeight.w600,
-          color: template.textColor.withOpacity(0.85),
+          color: template.textColor.withValues(alpha: 0.85),
         ),
       ),
       textDirection: TextDirection.ltr,
@@ -682,7 +685,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
         text: widget.author,
         style: TextStyle(
           fontSize: 13,
-          color: template.textColor.withOpacity(0.7),
+          color: template.textColor.withValues(alpha: 0.7),
         ),
       ),
       textDirection: TextDirection.ltr,
