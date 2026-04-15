@@ -1,10 +1,10 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image_gallery_saver/image_gallery_saver.dart';
+import 'package:image/image.dart' as img;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -16,12 +16,14 @@ class ReaderShareSheet extends StatefulWidget {
     required this.author,
     required this.text,
     required this.sourceLabel,
+    required this.messenger,
   });
 
   final String title;
   final String author;
   final String text;
   final String sourceLabel;
+  final ScaffoldMessengerState messenger;
 
   @override
   State<ReaderShareSheet> createState() => _ReaderShareSheetState();
@@ -34,26 +36,28 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
   static const double _footerTopSpacing = 12;
   static const double _footerDividerSpacing = 8;
   static const double _footerTitleSpacing = 4;
+  static const double _paragraphSpacing = 12;
 
   bool _busy = false;
   int _templateIndex = 0;
   int _currentPage = 0;
   Size? _lastLayoutSize;
-  List<String> _pages = const [];
+  List<List<String>> _pages = const [];
   final PageController _pageController = PageController();
+  OverlayEntry? _toastEntry;
 
   List<_ShareTemplate> get _templates => const [
-        _ShareTemplate(
-          background: Color(0xFFF7F3EC),
-          textColor: Color(0xFF2B231D),
-          accentColor: Color(0xFFB9ADA3),
-        ),
-        _ShareTemplate(
-          background: Color(0xFF1E1C1A),
-          textColor: Color(0xFFF6F3EE),
-          accentColor: Color(0xFF8D857E),
-        ),
-      ];
+    _ShareTemplate(
+      background: Color(0xFFF7F3EC),
+      textColor: Color(0xFF2B231D),
+      accentColor: Color(0xFFB9ADA3),
+    ),
+    _ShareTemplate(
+      background: Color(0xFF1E1C1A),
+      textColor: Color(0xFFF6F3EE),
+      accentColor: Color(0xFF8D857E),
+    ),
+  ];
 
   @override
   Widget build(BuildContext context) {
@@ -146,8 +150,12 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     );
   }
 
-  Widget _buildPreview(Size size, double cardWidth, _ShareTemplate template,
-      double maxCardHeight) {
+  Widget _buildPreview(
+    Size size,
+    double cardWidth,
+    _ShareTemplate template,
+    double maxCardHeight,
+  ) {
     if (_pages.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -161,10 +169,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
             padding: const EdgeInsets.only(bottom: 8),
             child: Text(
               '${_currentPage + 1}/${pages.length}',
-              style: const TextStyle(
-                fontSize: 12,
-                color: Colors.black54,
-              ),
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
             ),
           ),
         SizedBox(
@@ -202,10 +207,14 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     );
   }
 
-  Widget _buildShareCard(String text, _ShareTemplate template, double cardWidth,
-      double maxCardHeight) {
+  Widget _buildShareCard(
+    List<String> paragraphs,
+    _ShareTemplate template,
+    double cardWidth,
+    double maxCardHeight,
+  ) {
     final contentHeight = _cardHeightForText(
-      text,
+      paragraphs,
       cardWidth,
       template,
       maxCardHeight,
@@ -218,7 +227,6 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
         height: contentHeight,
         decoration: BoxDecoration(
           color: template.background,
-          borderRadius: BorderRadius.circular(28),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withOpacity(0.08),
@@ -234,19 +242,20 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              text,
-              style: TextStyle(
-                fontSize: 16,
-                height: 1.7,
-                color: template.textColor,
+            for (var i = 0; i < paragraphs.length; i++) ...[
+              Text(
+                paragraphs[i],
+                style: TextStyle(
+                  fontSize: 16,
+                  height: 1.7,
+                  color: template.textColor,
+                ),
               ),
-            ),
+              if (i < paragraphs.length - 1)
+                const SizedBox(height: _paragraphSpacing),
+            ],
             const SizedBox(height: _footerTopSpacing),
-            Container(
-              height: 1,
-              color: template.accentColor.withOpacity(0.6),
-            ),
+            Container(height: 1, color: template.accentColor.withOpacity(0.6)),
             const SizedBox(height: _footerDividerSpacing),
             Text(
               '《${widget.title}》',
@@ -287,10 +296,21 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       _showSnack('写入分享图片失败');
       return;
     }
-    await Share.shareXFiles(
-      files.map((file) => XFile(file.path)).toList(),
-      text: '${widget.title} · ${widget.author}',
-    );
+    if (!mounted) return;
+    final shareOrigin = _sharePositionOrigin();
+    final navigator = Navigator.of(context);
+    navigator.pop();
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    try {
+      await Share.shareXFiles(
+        files.map((file) => XFile(file.path)).toList(),
+        text: '${widget.title} · ${widget.author}',
+        subject: widget.title,
+        sharePositionOrigin: shareOrigin,
+      );
+    } catch (_) {
+      _showToast('系统分享面板打开失败');
+    }
   }
 
   Future<void> _saveImage() async {
@@ -356,13 +376,15 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     try {
       final dir = await getTemporaryDirectory();
       for (var i = 0; i < bytesList.length; i++) {
+        final jpegBytes = _encodeJpeg(bytesList[i]);
+        if (jpegBytes == null) continue;
         final file = File(
           p.join(
             dir.path,
-            'reader-share-${DateTime.now().millisecondsSinceEpoch}-$i.png',
+            'reader-share-${DateTime.now().millisecondsSinceEpoch}-$i.jpg',
           ),
         );
-        await file.writeAsBytes(bytesList[i]);
+        await file.writeAsBytes(jpegBytes);
         files.add(file);
       }
       return files;
@@ -371,25 +393,50 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     }
   }
 
-  void _ensurePagedText(
-      Size size, double cardWidth, double maxCardHeight) {
+  Uint8List? _encodeJpeg(Uint8List bytes) {
+    final image = img.decodeImage(bytes);
+    if (image == null) return null;
+    return Uint8List.fromList(img.encodeJpg(image, quality: 82));
+  }
+
+  Rect _sharePositionOrigin() {
+    final box = context.findRenderObject() as RenderBox?;
+    if (box != null && box.hasSize) {
+      return box.localToGlobal(Offset.zero) & box.size;
+    }
+    final size = MediaQuery.of(context).size;
+    return Rect.fromLTWH(0, 0, size.width, size.height);
+  }
+
+  void _ensurePagedText(Size size, double cardWidth, double maxCardHeight) {
     if (_lastLayoutSize == size && _pages.isNotEmpty) return;
     _lastLayoutSize = size;
     final pages = _paginateText(
-      widget.text.trim(),
+      _normalizeShareText(widget.text),
       cardWidth,
       maxCardHeight,
     );
-    _pages = pages.isEmpty ? [''] : pages;
+    _pages = pages.isEmpty
+        ? const [
+            [''],
+          ]
+        : pages;
     _currentPage = 0;
     if (_pageController.hasClients) {
       _pageController.jumpToPage(0);
     }
   }
 
-  List<String> _paginateText(
-      String text, double cardWidth, double maxCardHeight) {
-    if (text.isEmpty) return [''];
+  List<List<String>> _paginateText(
+    String text,
+    double cardWidth,
+    double maxCardHeight,
+  ) {
+    if (text.isEmpty) {
+      return const [
+        [''],
+      ];
+    }
     const textStyle = TextStyle(fontSize: 16, height: 1.7);
     const titleStyle = TextStyle(fontSize: 14, fontWeight: FontWeight.w600);
     const authorStyle = TextStyle(fontSize: 13);
@@ -399,39 +446,123 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       titleStyle,
       authorStyle,
     );
-    final maxTextHeight = (maxCardHeight -
-            _cardVerticalPadding * 2 -
-            footerHeight)
-        .clamp(80.0, maxCardHeight);
-    final pages = <String>[];
-    var start = 0;
-    while (start < text.length) {
-      var low = start + 1;
-      var high = text.length;
-      var best = low;
-      while (low <= high) {
-        final mid = (low + high) >> 1;
-        final candidate = text.substring(start, mid);
-        final height =
-            _measureTextHeight(candidate, textWidth, textStyle);
-        if (height <= maxTextHeight) {
-          best = mid;
-          low = mid + 1;
-        } else {
-          high = mid - 1;
+    final maxTextHeight =
+        (maxCardHeight - _cardVerticalPadding * 2 - footerHeight).clamp(
+          80.0,
+          maxCardHeight,
+        );
+    final paragraphs = text
+        .split(RegExp(r'\n\s*\n'))
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList();
+    if (paragraphs.isEmpty) {
+      return const [
+        [''],
+      ];
+    }
+    final pages = <List<String>>[];
+    var currentPage = <String>[];
+    for (final paragraph in paragraphs) {
+      final candidate = [...currentPage, paragraph];
+      if (_measureTextHeight(candidate, textWidth, textStyle) <=
+          maxTextHeight) {
+        currentPage = candidate;
+        continue;
+      }
+
+      if (currentPage.isNotEmpty) {
+        pages.add(currentPage);
+        currentPage = [];
+      }
+
+      if (_measureTextHeight(paragraph, textWidth, textStyle) <=
+          maxTextHeight) {
+        currentPage = [paragraph];
+        continue;
+      }
+
+      var remaining = paragraph;
+      while (remaining.isNotEmpty) {
+        final splitIndex = _bestFitIndex(
+          remaining,
+          textWidth,
+          textStyle,
+          maxTextHeight,
+        );
+        final pageText = remaining.substring(0, splitIndex).trimRight();
+        if (pageText.isNotEmpty) {
+          pages.add([pageText]);
         }
+        remaining = remaining.substring(splitIndex).trimLeft();
       }
-      final pageText = text.substring(start, best).trim();
-      if (pageText.isNotEmpty) {
-        pages.add(pageText);
-      }
-      start = best;
+    }
+    if (currentPage.isNotEmpty) {
+      pages.add(currentPage);
     }
     return pages;
   }
 
-  double _measureTextHeight(
-      String text, double maxWidth, TextStyle style) {
+  int _bestFitIndex(
+    String text,
+    double maxWidth,
+    TextStyle style,
+    double maxHeight,
+  ) {
+    var low = 1;
+    var high = text.length;
+    var best = 1;
+    while (low <= high) {
+      final mid = (low + high) >> 1;
+      final candidate = text.substring(0, mid);
+      final height = _measureTextHeight(candidate, maxWidth, style);
+      if (height <= maxHeight) {
+        best = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return _preferBreakPoint(text, best);
+  }
+
+  int _preferBreakPoint(String text, int index) {
+    if (index >= text.length) return text.length;
+    const separators = {'\n', ' ', '，', '。', '！', '？', '；', '：', '、'};
+    for (var i = index; i > 1; i--) {
+      if (separators.contains(text[i - 1])) {
+        return i;
+      }
+    }
+    return index;
+  }
+
+  String _normalizeShareText(String text) {
+    var normalized = text.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    normalized = normalized.replaceAll(RegExp(r'[ \t]+\n'), '\n');
+    normalized = normalized.replaceAll(RegExp(r'\n{3,}'), '\n\n');
+    return normalized.trim();
+  }
+
+  double _measureTextHeight(Object content, double maxWidth, TextStyle style) {
+    if (content is List<String>) {
+      var totalHeight = 0.0;
+      for (var i = 0; i < content.length; i++) {
+        totalHeight += _measureParagraphHeight(content[i], maxWidth, style);
+        if (i < content.length - 1) {
+          totalHeight += _paragraphSpacing;
+        }
+      }
+      return totalHeight;
+    }
+    return _measureParagraphHeight(content as String, maxWidth, style);
+  }
+
+  double _measureParagraphHeight(
+    String text,
+    double maxWidth,
+    TextStyle style,
+  ) {
     final painter = TextPainter(
       text: TextSpan(text: text, style: style),
       textDirection: TextDirection.ltr,
@@ -440,7 +571,10 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
   }
 
   double _measureFooterHeight(
-      double maxWidth, TextStyle titleStyle, TextStyle authorStyle) {
+    double maxWidth,
+    TextStyle titleStyle,
+    TextStyle authorStyle,
+  ) {
     final titlePainter = TextPainter(
       text: TextSpan(text: '《${widget.title}》', style: titleStyle),
       textDirection: TextDirection.ltr,
@@ -457,20 +591,25 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
         authorPainter.height;
   }
 
-  double _cardHeightForText(String text, double cardWidth,
-      _ShareTemplate template, double maxCardHeight) {
+  double _cardHeightForText(
+    List<String> paragraphs,
+    double cardWidth,
+    _ShareTemplate template,
+    double maxCardHeight,
+  ) {
     final textWidth = cardWidth - _cardHorizontalPadding * 2;
     final textHeight = _measureTextHeight(
-      text,
+      paragraphs,
       textWidth,
       TextStyle(fontSize: 16, height: 1.7, color: template.textColor),
     );
     final footerHeight = _measureFooterHeight(
       textWidth,
       TextStyle(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: template.textColor.withOpacity(0.85)),
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: template.textColor.withOpacity(0.85),
+      ),
       TextStyle(fontSize: 13, color: template.textColor.withOpacity(0.7)),
     );
     final targetHeight = _cardVerticalPadding * 2 + textHeight + footerHeight;
@@ -478,35 +617,47 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
   }
 
   Future<Uint8List?> _renderShareImage(
-      String text, _ShareTemplate template, double pixelRatio) async {
+    List<String> paragraphs,
+    _ShareTemplate template,
+    double pixelRatio,
+  ) async {
     final size = MediaQuery.of(context).size;
     final cardWidth = (size.width - 48).clamp(240.0, 420.0);
     final maxCardHeight = _maxImageHeightPx / pixelRatio;
-    final cardHeight =
-        _cardHeightForText(text, cardWidth, template, maxCardHeight);
+    final cardHeight = _cardHeightForText(
+      paragraphs,
+      cardWidth,
+      template,
+      maxCardHeight,
+    );
     final recorder = ui.PictureRecorder();
     final canvas = Canvas(recorder);
     canvas.scale(pixelRatio);
     final rect = Rect.fromLTWH(0, 0, cardWidth, cardHeight);
-    final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(28));
     final paint = Paint()..color = template.background;
-    canvas.drawRRect(rrect, paint);
+    canvas.drawRect(rect, paint);
     final textWidth = cardWidth - _cardHorizontalPadding * 2;
-    final textOffset =
-        Offset(_cardHorizontalPadding, _cardVerticalPadding);
-    final textPainter = TextPainter(
-      text: TextSpan(
-        text: text,
-        style: TextStyle(
-          fontSize: 16,
-          height: 1.7,
-          color: template.textColor,
+    final textOffset = Offset(_cardHorizontalPadding, _cardVerticalPadding);
+    var paragraphTop = textOffset.dy;
+    for (var i = 0; i < paragraphs.length; i++) {
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text: paragraphs[i],
+          style: TextStyle(
+            fontSize: 16,
+            height: 1.7,
+            color: template.textColor,
+          ),
         ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: textWidth);
-    textPainter.paint(canvas, textOffset);
-    final footerTop = textOffset.dy + textPainter.height + _footerTopSpacing;
+        textDirection: TextDirection.ltr,
+      )..layout(maxWidth: textWidth);
+      textPainter.paint(canvas, Offset(_cardHorizontalPadding, paragraphTop));
+      paragraphTop += textPainter.height;
+      if (i < paragraphs.length - 1) {
+        paragraphTop += _paragraphSpacing;
+      }
+    }
+    final footerTop = paragraphTop + _footerTopSpacing;
     final dividerPaint = Paint()
       ..color = template.accentColor.withOpacity(0.6)
       ..strokeWidth = 1;
@@ -559,9 +710,64 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
 
   void _showSnack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
+    _showToast(message);
+  }
+
+  void _showToast(String message) {
+    _toastEntry?.remove();
+    final overlay = Navigator.of(context, rootNavigator: true).overlay;
+    if (overlay == null) return;
+    final mediaQuery = MediaQuery.maybeOf(overlay.context);
+    final topInset = mediaQuery?.padding.top ?? 0;
+    final entry = OverlayEntry(
+      builder: (context) => Positioned(
+        top: topInset + 16,
+        left: 20,
+        right: 20,
+        child: IgnorePointer(
+          child: Material(
+            color: Colors.transparent,
+            child: Center(
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xE61F1F1F),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  message,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
     );
+    _toastEntry = entry;
+    overlay.insert(entry);
+    Future<void>.delayed(const Duration(seconds: 2), () {
+      if (_toastEntry == entry) {
+        _toastEntry = null;
+      }
+      entry.remove();
+    });
+  }
+
+  @override
+  void dispose() {
+    _toastEntry?.remove();
+    _toastEntry = null;
+    _pageController.dispose();
+    super.dispose();
   }
 }
 

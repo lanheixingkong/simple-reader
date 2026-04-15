@@ -651,13 +651,13 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   }
 
   String _estimateVisibleText() {
-    if (_plainText.isEmpty) return '';
+    if (_paragraphs.isEmpty) return _plainText;
     final controller = _scrollController;
     if (controller == null || !controller.hasClients) {
-      return _plainText;
+      return _paragraphs.join('\n\n');
     }
     final settings = _settings;
-    if (settings == null) return _plainText;
+    if (settings == null) return _paragraphs.join('\n\n');
     final size = MediaQuery.of(context).size;
     final factor = settings.fontSize * settings.fontSize * 1.4;
     final charsPerScreen = math.max(
@@ -668,9 +668,38 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     final progress = maxExtent <= 0
         ? 0.0
         : (controller.offset / maxExtent).clamp(0.0, 1.0);
-    final start = (_plainText.length * progress).floor();
-    final end = (start + charsPerScreen).clamp(0, _plainText.length);
-    return _plainText.substring(start, end);
+    final totalChars = _paragraphs.fold<int>(
+      0,
+      (sum, paragraph) => sum + paragraph.length,
+    );
+    if (totalChars <= charsPerScreen) {
+      return _paragraphs.join('\n\n');
+    }
+    final targetChars = (totalChars * progress).floor();
+    var currentChars = 0;
+    var startIndex = 0;
+    for (var i = 0; i < _paragraphs.length; i++) {
+      final nextChars = currentChars + _paragraphs[i].length;
+      if (nextChars >= targetChars) {
+        startIndex = i;
+        break;
+      }
+      currentChars = nextChars;
+    }
+
+    final buffer = StringBuffer();
+    var collectedChars = 0;
+    for (var i = startIndex; i < _paragraphs.length; i++) {
+      final paragraph = _paragraphs[i].trim();
+      if (paragraph.isEmpty) continue;
+      if (buffer.isNotEmpty) {
+        buffer.write('\n\n');
+      }
+      buffer.write(paragraph);
+      collectedChars += paragraph.length;
+      if (collectedChars >= charsPerScreen) break;
+    }
+    return buffer.toString().trim();
   }
 
   Future<void> _openShareSheet(
@@ -686,6 +715,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
         author: '未知作者',
         text: text,
         sourceLabel: sourceLabel,
+        messenger: ScaffoldMessenger.of(this.context),
       ),
     );
   }

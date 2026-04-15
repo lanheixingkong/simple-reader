@@ -568,7 +568,10 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             ContextMenuButtonItem(
               label: '分享',
               onPressed: () {
-                final selectedText = _selectedText;
+                final selectedText = _shareTextForSelection(
+                  _selectedText,
+                  chapterIndex,
+                );
                 selectableRegionState.hideToolbar();
                 if (selectedText.isEmpty) return;
                 _openShareSheet(selectedText, sourceLabel: '已选文字');
@@ -704,7 +707,112 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   String _trimShareText(String text) {
-    return text.trim();
+    return _normalizeShareText(text);
+  }
+
+  String _shareTextForSelection(String text, int chapterIndex) {
+    final normalizedSelected = _normalizeCompactText(text);
+    if (normalizedSelected.isEmpty) {
+      return _normalizeShareText(text);
+    }
+    if (chapterIndex < 0 || chapterIndex >= _chapters.length) {
+      return _normalizeShareText(text);
+    }
+    final cacheKey = _chapters[chapterIndex].cacheKey;
+    final blocks = _chapterBlocksCache[cacheKey];
+    if (blocks == null || blocks.isEmpty) {
+      return _normalizeShareText(text);
+    }
+    final paragraphs = <String>[];
+    final compactParagraphs = <String>[];
+    for (final block in blocks) {
+      final paragraph = block.text?.trim();
+      if (paragraph == null || paragraph.isEmpty) continue;
+      final normalizedParagraph = _normalizeCompactText(paragraph);
+      if (normalizedParagraph.isEmpty) continue;
+      paragraphs.add(paragraph);
+      compactParagraphs.add(normalizedParagraph);
+    }
+    if (paragraphs.isEmpty) {
+      return _normalizeShareText(text);
+    }
+    final joinedCompact = compactParagraphs.join();
+    final startOffset = joinedCompact.indexOf(normalizedSelected);
+    if (startOffset == -1) {
+      return _normalizeShareText(text);
+    }
+    final endOffset = startOffset + normalizedSelected.length;
+
+    var compactCursor = 0;
+    final selectedParagraphs = <String>[];
+    for (var i = 0; i < paragraphs.length; i++) {
+      final compact = compactParagraphs[i];
+      final paragraphStart = compactCursor;
+      final paragraphEnd = paragraphStart + compact.length;
+      compactCursor = paragraphEnd;
+
+      if (endOffset <= paragraphStart || startOffset >= paragraphEnd) {
+        continue;
+      }
+
+      final localStart = startOffset <= paragraphStart
+          ? 0
+          : startOffset - paragraphStart;
+      final localEnd = endOffset >= paragraphEnd
+          ? compact.length
+          : endOffset - paragraphStart;
+      final slice = _sliceParagraphByCompactOffsets(
+        paragraphs[i],
+        localStart,
+        localEnd,
+      );
+      if (slice.isNotEmpty) {
+        selectedParagraphs.add(slice);
+      }
+    }
+    if (selectedParagraphs.isNotEmpty) {
+      return selectedParagraphs.join('\n\n');
+    }
+    return _normalizeShareText(text);
+  }
+
+  String _normalizeShareText(String text) {
+    final paragraphs = _translationService.splitParagraphs(text);
+    if (paragraphs.isEmpty) return text.trim();
+    return paragraphs.join('\n\n').trim();
+  }
+
+  String _normalizeCompactText(String text) {
+    return text.replaceAll(RegExp(r'\s+'), '');
+  }
+
+  String _sliceParagraphByCompactOffsets(
+    String paragraph,
+    int compactStart,
+    int compactEnd,
+  ) {
+    if (compactStart >= compactEnd) return '';
+    var compactIndex = 0;
+    int? startIndex;
+    var endIndex = paragraph.length;
+
+    for (var i = 0; i < paragraph.length; i++) {
+      final char = paragraph[i];
+      if (RegExp(r'\s').hasMatch(char)) {
+        continue;
+      }
+      if (startIndex == null && compactIndex >= compactStart) {
+        startIndex = i;
+      }
+      compactIndex += 1;
+      if (compactIndex >= compactEnd) {
+        endIndex = i + 1;
+        break;
+      }
+    }
+
+    if (startIndex == null) return '';
+    return paragraph.substring(startIndex, endIndex).trim();
   }
 
   Future<void> _openShareSheet(
@@ -727,6 +835,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
         author: author,
         text: text,
         sourceLabel: sourceLabel,
+        messenger: ScaffoldMessenger.of(this.context),
       ),
     );
   }
