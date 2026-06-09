@@ -1036,6 +1036,13 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       final translated = await _translationService.translateParagraphs(
         settings: translationSettings,
         paragraphs: missing,
+        onParagraphTranslated: (key, translation) {
+          _translations[key] = translation;
+          _schedulePersistTranslations();
+          if (mounted && chapterIndex == _currentChapter) {
+            setState(() {});
+          }
+        },
       );
       if (translated.isEmpty) return;
       _translations.addAll(translated);

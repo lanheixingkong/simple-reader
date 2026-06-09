@@ -965,6 +965,13 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
       final translated = await _translationService.translateParagraphs(
         settings: settings,
         paragraphs: missing,
+        onParagraphTranslated: (key, translation) {
+          _translations[key] = translation;
+          _schedulePersistTranslations();
+          if (mounted && pageNumber == _textModePage) {
+            setState(() {});
+          }
+        },
       );
       if (translated.isEmpty) return;
       _translations.addAll(translated);

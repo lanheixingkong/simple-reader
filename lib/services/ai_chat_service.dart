@@ -14,6 +14,7 @@ class AiChatService {
   final int maxRetries;
   final Duration minRequestGap;
   DateTime? _lastRequestAt;
+  Future<void> _requestStartQueue = Future<void>.value();
 
   Future<String> testSettings({required AiChatApiSettings settings}) async {
     return _withRetry(() async {
@@ -244,15 +245,19 @@ class AiChatService {
   }
 
   Future<void> _waitForRateLimit() async {
-    final now = DateTime.now();
-    final last = _lastRequestAt;
-    if (last != null) {
-      final elapsed = now.difference(last);
-      if (elapsed < minRequestGap) {
-        await Future<void>.delayed(minRequestGap - elapsed);
+    final wait = _requestStartQueue.then((_) async {
+      final now = DateTime.now();
+      final last = _lastRequestAt;
+      if (last != null) {
+        final elapsed = now.difference(last);
+        if (elapsed < minRequestGap) {
+          await Future<void>.delayed(minRequestGap - elapsed);
+        }
       }
-    }
-    _lastRequestAt = DateTime.now();
+      _lastRequestAt = DateTime.now();
+    });
+    _requestStartQueue = wait;
+    await wait;
   }
 
   Future<String> _withRetry(

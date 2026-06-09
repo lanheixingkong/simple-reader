@@ -501,12 +501,15 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   }
 
   void _enqueueTranslateAll({required bool forceRefresh}) {
-    _translationQueue = _translationQueue.then(
-      (_) => _translateMissingParagraphs(
-        forceRefresh: forceRefresh,
-        notifyIfChinese: false,
-      ),
-    );
+    _translationQueue = _translationQueue
+        .catchError((_) {})
+        .then(
+          (_) => _translateMissingParagraphs(
+            forceRefresh: forceRefresh,
+            notifyIfChinese: false,
+          ),
+        )
+        .catchError((_) {});
   }
 
   Future<void> _translateMissingParagraphs({
@@ -544,6 +547,13 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
       final translated = await _translationService.translateParagraphs(
         settings: settings,
         paragraphs: missing,
+        onParagraphTranslated: (key, translation) {
+          _translations[key] = translation;
+          _schedulePersistTranslations();
+          if (mounted) {
+            setState(() {});
+          }
+        },
       );
       if (translated.isEmpty) return;
       _translations.addAll(translated);
