@@ -13,6 +13,7 @@ class AiChatMessage {
     required this.content,
     required this.createdAt,
     this.quote,
+    this.citations = const [],
   });
 
   final String id;
@@ -20,6 +21,7 @@ class AiChatMessage {
   final String content;
   final int createdAt;
   final String? quote;
+  final List<AiChatCitation> citations;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -27,6 +29,7 @@ class AiChatMessage {
     'content': content,
     'createdAt': createdAt,
     'quote': quote,
+    'citations': citations.map((item) => item.toJson()).toList(),
   };
 
   static AiChatMessage fromJson(Map<String, dynamic> json) {
@@ -41,6 +44,30 @@ class AiChatMessage {
       content: json['content'] as String? ?? '',
       createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
       quote: json['quote'] as String?,
+      citations: (json['citations'] as List<dynamic>? ?? [])
+          .whereType<Map>()
+          .map(
+            (item) => AiChatCitation.fromJson(
+              item.map((key, value) => MapEntry(key.toString(), value)),
+            ),
+          )
+          .toList(),
+    );
+  }
+}
+
+class AiChatCitation {
+  const AiChatCitation({required this.title, required this.url});
+
+  final String title;
+  final String url;
+
+  Map<String, dynamic> toJson() => {'title': title, 'url': url};
+
+  static AiChatCitation fromJson(Map<String, dynamic> json) {
+    return AiChatCitation(
+      title: json['title'] as String? ?? '',
+      url: json['url'] as String? ?? '',
     );
   }
 }

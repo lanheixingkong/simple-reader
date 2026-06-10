@@ -51,6 +51,15 @@
 - 原因：上游 `2.0.3` 在 AGP 8 / Java 17 环境下存在兼容问题（namespace、JVM target、旧注册方式）
 - 当前本地版本已完成兼容修复，可直接用于 release 构建
 
+## AI Agent 与联网搜索
+- AI 问答支持 OpenAI 兼容的 Tool Calling，由模型自主决定是否调用工具。
+- 联网搜索支持 Tavily、Exa、Brave Search、Serper，均无需自建服务，只需填写对应 API Key；默认推荐 [Tavily](https://www.tavily.com/)。
+- 也支持免费开源的 [SearXNG](https://github.com/searxng/searxng)，推荐部署私有实例。
+- 搜索工具会将标题、正文摘要和来源链接交给 Agent，再由模型生成最终回答。
+- 在 AI 问答接口设置中启用 Agent 与联网搜索，然后选择搜索服务商并填写对应配置。
+- SearXNG 必须在 `settings.yml` 的 `search.formats` 中启用 `json`；许多公共实例会禁用 JSON API 或限制调用频率。
+- Agent 执行期间仅临时展示简单状态，完成后只保存用户问题、最终回答和搜索引用。
+
 ## Notes
 - Import files are copied into app storage (`Documents/Books`) for sandbox safety.
 - Reading progress (page/scroll offset) is stored locally.

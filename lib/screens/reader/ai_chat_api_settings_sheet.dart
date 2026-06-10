@@ -24,7 +24,12 @@ class _AiChatApiSettingsSheetState extends State<AiChatApiSettingsSheet> {
   late final TextEditingController _modelController;
   late final TextEditingController _apiKeyController;
   late final TextEditingController _systemPromptController;
+  late final TextEditingController _webSearchApiKeyController;
+  late final TextEditingController _webSearchBaseUrlController;
   late double _temperature;
+  late bool _agentEnabled;
+  late bool _webSearchEnabled;
+  late WebSearchProvider _webSearchProvider;
   bool _testing = false;
   String? _testMessage;
 
@@ -37,7 +42,16 @@ class _AiChatApiSettingsSheetState extends State<AiChatApiSettingsSheet> {
     _modelController = TextEditingController(text: initial.model);
     _apiKeyController = TextEditingController(text: initial.apiKey);
     _systemPromptController = TextEditingController(text: initial.systemPrompt);
+    _webSearchApiKeyController = TextEditingController(
+      text: initial.webSearchApiKey,
+    );
+    _webSearchBaseUrlController = TextEditingController(
+      text: initial.webSearchBaseUrl,
+    );
     _temperature = initial.temperature;
+    _agentEnabled = initial.agentEnabled;
+    _webSearchEnabled = initial.webSearchEnabled;
+    _webSearchProvider = initial.webSearchProvider;
   }
 
   @override
@@ -46,6 +60,8 @@ class _AiChatApiSettingsSheetState extends State<AiChatApiSettingsSheet> {
     _modelController.dispose();
     _apiKeyController.dispose();
     _systemPromptController.dispose();
+    _webSearchApiKeyController.dispose();
+    _webSearchBaseUrlController.dispose();
     super.dispose();
   }
 
@@ -113,6 +129,68 @@ class _AiChatApiSettingsSheetState extends State<AiChatApiSettingsSheet> {
               ),
               const SizedBox(height: 8),
               _textField(_systemPromptController, '系统提示词', maxLines: 4),
+              const SizedBox(height: 12),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用 Agent 模式'),
+                subtitle: const Text('允许模型自主选择并调用已启用的工具'),
+                value: _agentEnabled,
+                onChanged: (value) => setState(() => _agentEnabled = value),
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('启用联网搜索'),
+                subtitle: const Text('模型会根据问题自主决定是否搜索'),
+                value: _webSearchEnabled,
+                onChanged: _agentEnabled
+                    ? (value) => setState(() => _webSearchEnabled = value)
+                    : null,
+              ),
+              if (_agentEnabled && _webSearchEnabled) ...[
+                const SizedBox(height: 4),
+                DropdownButtonFormField<WebSearchProvider>(
+                  initialValue: _webSearchProvider,
+                  decoration: const InputDecoration(
+                    labelText: '联网搜索服务商',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: WebSearchProvider.values
+                      .map(
+                        (item) => DropdownMenuItem<WebSearchProvider>(
+                          value: item,
+                          child: Text(_webSearchProviderLabel(item)),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value == null) return;
+                    setState(() => _webSearchProvider = value);
+                  },
+                ),
+                const SizedBox(height: 12),
+                if (_webSearchProvider != WebSearchProvider.searxng) ...[
+                  _textField(
+                    _webSearchApiKeyController,
+                    '${_webSearchProviderName(_webSearchProvider)} API Key',
+                    obscure: true,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '无需自建服务。工具会将搜索摘要和来源链接交给 Agent。',
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                  ),
+                ] else ...[
+                  _textField(
+                    _webSearchBaseUrlController,
+                    'SearXNG 实例地址，例如 http://127.0.0.1:8080',
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'SearXNG 免费开源，但公共实例可能限流或禁用 JSON API。',
+                    style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                  ),
+                ],
+              ],
               const SizedBox(height: 12),
               Wrap(
                 spacing: 8,
@@ -189,6 +267,26 @@ class _AiChatApiSettingsSheetState extends State<AiChatApiSettingsSheet> {
     }
   }
 
+  String _webSearchProviderLabel(WebSearchProvider provider) {
+    return switch (provider) {
+      WebSearchProvider.tavily => 'Tavily（无需自建，推荐）',
+      WebSearchProvider.exa => 'Exa（无需自建）',
+      WebSearchProvider.brave => 'Brave Search（无需自建）',
+      WebSearchProvider.serper => 'Serper（无需自建）',
+      WebSearchProvider.searxng => 'SearXNG（开源/自托管）',
+    };
+  }
+
+  String _webSearchProviderName(WebSearchProvider provider) {
+    return switch (provider) {
+      WebSearchProvider.tavily => 'Tavily',
+      WebSearchProvider.exa => 'Exa',
+      WebSearchProvider.brave => 'Brave Search',
+      WebSearchProvider.serper => 'Serper',
+      WebSearchProvider.searxng => 'SearXNG',
+    };
+  }
+
   void _save() {
     final settings = _buildSettings();
     widget.onSave(settings);
@@ -231,6 +329,11 @@ class _AiChatApiSettingsSheetState extends State<AiChatApiSettingsSheet> {
       apiKey: _apiKeyController.text.trim(),
       systemPrompt: _systemPromptController.text.trim(),
       temperature: _temperature.clamp(0.0, 1.5),
+      agentEnabled: _agentEnabled,
+      webSearchEnabled: _agentEnabled && _webSearchEnabled,
+      webSearchProvider: _webSearchProvider,
+      webSearchApiKey: _webSearchApiKeyController.text.trim(),
+      webSearchBaseUrl: _webSearchBaseUrlController.text.trim(),
     );
   }
 }

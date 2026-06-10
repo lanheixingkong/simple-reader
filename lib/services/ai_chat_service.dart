@@ -197,6 +197,90 @@ class AiChatService {
     }, provider: settings.provider);
   }
 
+  Future<AgentModelResponse> agentCompletion({
+    required AiChatApiSettings settings,
+    required List<Map<String, dynamic>> messages,
+    required List<Map<String, dynamic>> tools,
+  }) async {
+    return _withRetryValue(() async {
+      await _waitForRateLimit();
+      final apiKey = settings.apiKey.trim();
+      if (apiKey.isEmpty) {
+        throw AiChatException(
+          level: AiChatErrorLevel.config,
+          message: '请先配置 API Key',
+          provider: settings.provider,
+        );
+      }
+      final payload = <String, dynamic>{
+        'model': settings.effectiveModel(),
+        'temperature': settings.temperature.clamp(0, 1.5),
+        'messages': messages,
+        if (tools.isNotEmpty) 'tools': tools,
+        if (tools.isNotEmpty) 'tool_choice': 'auto',
+      };
+      final response = await _postJson(
+        Uri.parse(_joinPath(settings.effectiveBaseUrl(), '/chat/completions')),
+        provider: settings.provider,
+        headers: {'Authorization': 'Bearer $apiKey'},
+        payload: payload,
+      );
+      final choices = response['choices'];
+      if (choices is! List || choices.isEmpty || choices.first is! Map) {
+        throw AiChatException(
+          level: AiChatErrorLevel.response,
+          message: '模型返回为空',
+          provider: settings.provider,
+        );
+      }
+      final first = Map<String, dynamic>.from(choices.first as Map);
+      final raw = first['message'];
+      if (raw is! Map) {
+        throw AiChatException(
+          level: AiChatErrorLevel.response,
+          message: '模型返回格式不正确',
+          provider: settings.provider,
+        );
+      }
+      final message = Map<String, dynamic>.from(raw);
+      final toolCalls = <AgentToolCall>[];
+      final rawToolCalls = message['tool_calls'];
+      if (rawToolCalls is List) {
+        for (final rawCall in rawToolCalls.whereType<Map>()) {
+          final call = Map<String, dynamic>.from(rawCall);
+          final function = call['function'];
+          if (function is! Map) continue;
+          final functionMap = Map<String, dynamic>.from(function);
+          final id = call['id']?.toString() ?? '';
+          final name = functionMap['name']?.toString() ?? '';
+          if (id.isEmpty || name.isEmpty) continue;
+          Map<String, dynamic> arguments = {};
+          final rawArguments = functionMap['arguments'];
+          if (rawArguments is String && rawArguments.trim().isNotEmpty) {
+            try {
+              final decoded = jsonDecode(rawArguments);
+              if (decoded is Map) {
+                arguments = Map<String, dynamic>.from(decoded);
+              }
+            } catch (_) {
+              arguments = {};
+            }
+          } else if (rawArguments is Map) {
+            arguments = Map<String, dynamic>.from(rawArguments);
+          }
+          toolCalls.add(
+            AgentToolCall(id: id, name: name, arguments: arguments),
+          );
+        }
+      }
+      return AgentModelResponse(
+        content: _extractOptionalMessageText(message['content']),
+        toolCalls: toolCalls,
+        rawMessage: message,
+      );
+    }, provider: settings.provider);
+  }
+
   Stream<String> streamChatCompletion({
     required AiChatApiSettings settings,
     required List<AiChatMessage> history,
@@ -273,6 +357,44 @@ class AiChatService {
         if (!error.retryable || attempt > maxRetries) {
           rethrow;
         }
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      } on TimeoutException {
+        attempt += 1;
+        if (attempt > maxRetries) {
+          throw AiChatException(
+            level: AiChatErrorLevel.timeout,
+            message: '请求超时，请稍后重试',
+            provider: provider,
+            retryable: true,
+          );
+        }
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      } on SocketException {
+        attempt += 1;
+        if (attempt > maxRetries) {
+          throw AiChatException(
+            level: AiChatErrorLevel.network,
+            message: '网络连接失败，请检查网络后重试',
+            provider: provider,
+            retryable: true,
+          );
+        }
+        await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
+      }
+    }
+  }
+
+  Future<T> _withRetryValue<T>(
+    Future<T> Function() operation, {
+    required AiChatApiProvider provider,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        return await operation();
+      } on AiChatException catch (error) {
+        attempt += 1;
+        if (!error.retryable || attempt > maxRetries) rethrow;
         await Future<void>.delayed(Duration(milliseconds: 500 * attempt));
       } on TimeoutException {
         attempt += 1;
@@ -572,12 +694,50 @@ class AiChatService {
     return '';
   }
 
+  String _extractOptionalMessageText(dynamic content) {
+    if (content is String) return content;
+    if (content is List) {
+      final buffer = StringBuffer();
+      for (final item in content) {
+        if (item is Map && item['text'] is String) {
+          buffer.write(item['text'] as String);
+        }
+      }
+      return buffer.toString();
+    }
+    return '';
+  }
+
   String _joinPath(String baseUrl, String path) {
     final cleanBase = baseUrl.endsWith('/')
         ? baseUrl.substring(0, baseUrl.length - 1)
         : baseUrl;
     return '$cleanBase$path';
   }
+}
+
+class AgentModelResponse {
+  const AgentModelResponse({
+    required this.content,
+    required this.toolCalls,
+    required this.rawMessage,
+  });
+
+  final String content;
+  final List<AgentToolCall> toolCalls;
+  final Map<String, dynamic> rawMessage;
+}
+
+class AgentToolCall {
+  const AgentToolCall({
+    required this.id,
+    required this.name,
+    required this.arguments,
+  });
+
+  final String id;
+  final String name;
+  final Map<String, dynamic> arguments;
 }
 
 enum AiChatErrorLevel {

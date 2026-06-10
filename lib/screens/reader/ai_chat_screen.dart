@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/library.dart';
+import '../../services/agent_service.dart';
 import '../../services/ai_chat_api_store.dart';
 import '../../services/ai_chat_service.dart';
 import '../../services/ai_chat_store.dart';
@@ -23,6 +25,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   final _apiStore = AiChatApiStore.instance;
   final _chatStore = AiChatStore.instance;
   final _service = AiChatService();
+  final _agentService = AgentService();
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
 
@@ -33,6 +36,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   bool _sending = false;
   String? _errorText;
   String _streamingAssistantText = '';
+  List<String> _agentStatuses = [];
 
   @override
   void initState() {
@@ -255,6 +259,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
       itemBuilder: (context, index) {
         if (index == conversation.messages.length &&
             (_sending || hasStreaming)) {
+          if (_agentStatuses.isNotEmpty) {
+            return _buildAgentProgress();
+          }
           return _buildBubble(isUser: false, content: _streamingAssistantText);
         }
         final message = conversation.messages[index];
@@ -262,6 +269,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
           isUser: message.role == AiChatRole.user,
           content: message.content,
           quote: message.quote,
+          citations: message.citations,
         );
       },
     );
@@ -271,6 +279,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     required bool isUser,
     required String content,
     String? quote,
+    List<AiChatCitation> citations = const [],
   }) {
     final bubbleColor = isUser
         ? const Color(0xFFE6F4FF)
@@ -314,6 +323,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
               MarkdownBody(
                 data: content.isEmpty ? '...' : content,
                 selectable: true,
+                onTapLink: (_, href, _) => _openUrl(href),
                 styleSheet: MarkdownStyleSheet(
                   p: TextStyle(height: 1.5, color: textColor, fontSize: 15),
                   code: TextStyle(
@@ -327,10 +337,90 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   ),
                 ),
               ),
+            if (!isUser && citations.isNotEmpty) ...[
+              const SizedBox(height: 10),
+              const Divider(height: 1),
+              const SizedBox(height: 8),
+              Text(
+                '引用来源',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.grey.shade800,
+                ),
+              ),
+              const SizedBox(height: 4),
+              for (final citation in citations)
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: TextButton(
+                    onPressed: () => _openUrl(citation.url),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      alignment: Alignment.centerLeft,
+                    ),
+                    child: Text(
+                      citation.title,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ),
+            ],
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildAgentProgress() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 520),
+        margin: const EdgeInsets.symmetric(vertical: 6),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFFF1F3F5),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 8),
+                Text('Agent 执行中'),
+              ],
+            ),
+            const SizedBox(height: 8),
+            for (final status in _agentStatuses.take(4))
+              Padding(
+                padding: const EdgeInsets.only(top: 3),
+                child: Text(
+                  '› $status',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openUrl(String? value) async {
+    final uri = Uri.tryParse(value?.trim() ?? '');
+    if (uri == null || !(uri.isScheme('http') || uri.isScheme('https'))) {
+      return;
+    }
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
   }
 
   Widget _buildInputArea() {
@@ -435,21 +525,50 @@ class _AiChatScreenState extends State<AiChatScreen> {
       _sending = true;
       _errorText = null;
       _streamingAssistantText = '';
+      _agentStatuses = [];
     });
     _scrollToBottom();
 
     try {
-      await for (final delta in _service.streamChatCompletion(
-        settings: settings,
-        history: beforeHistory,
-        question: question,
-        quote: quote,
-      )) {
-        if (!mounted) return;
-        setState(() {
-          _streamingAssistantText += delta;
-        });
-        _scrollToBottom();
+      var citations = const <AiChatCitation>[];
+      if (settings.agentEnabled) {
+        await for (final event in _agentService.run(
+          settings: settings,
+          history: beforeHistory,
+          question: question,
+          quote: quote,
+        )) {
+          if (!mounted) return;
+          if (event is AgentStatusEvent) {
+            setState(() {
+              _agentStatuses = [
+                ..._agentStatuses,
+                event.message,
+              ].reversed.take(4).toList().reversed.toList();
+            });
+          } else if (event is AgentCompletedEvent) {
+            setState(() {
+              _streamingAssistantText = event.answer;
+            });
+            citations = event.citations
+                .map((item) => AiChatCitation(title: item.title, url: item.url))
+                .toList();
+          }
+          _scrollToBottom();
+        }
+      } else {
+        await for (final delta in _service.streamChatCompletion(
+          settings: settings,
+          history: beforeHistory,
+          question: question,
+          quote: quote,
+        )) {
+          if (!mounted) return;
+          setState(() {
+            _streamingAssistantText += delta;
+          });
+          _scrollToBottom();
+        }
       }
       final answer = _streamingAssistantText.trim();
       if (answer.isEmpty) {
@@ -464,6 +583,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
         role: AiChatRole.assistant,
         content: answer,
         createdAt: DateTime.now().millisecondsSinceEpoch,
+        citations: citations,
       );
       final completedConversation = conversation.copyWith(
         updatedAt: DateTime.now().millisecondsSinceEpoch,
@@ -475,6 +595,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
       setState(() {
         _currentConversation = completedConversation;
         _streamingAssistantText = '';
+        _agentStatuses = [];
       });
       _scrollToBottom();
     } catch (error) {
@@ -484,6 +605,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
             ? error.userMessage()
             : '请求失败：$error';
         _streamingAssistantText = '';
+        _agentStatuses = [];
       });
     } finally {
       if (mounted) {

@@ -2,6 +2,8 @@ import 'persistent_kv_store.dart';
 
 enum AiChatApiProvider { openai, aliyun, glm, deepseek }
 
+enum WebSearchProvider { tavily, exa, brave, serper, searxng }
+
 class AiChatApiSettings {
   const AiChatApiSettings({
     required this.provider,
@@ -10,6 +12,11 @@ class AiChatApiSettings {
     required this.apiKey,
     required this.systemPrompt,
     required this.temperature,
+    this.agentEnabled = true,
+    this.webSearchEnabled = false,
+    this.webSearchProvider = WebSearchProvider.tavily,
+    this.webSearchApiKey = '',
+    this.webSearchBaseUrl = '',
   });
 
   final AiChatApiProvider provider;
@@ -18,6 +25,11 @@ class AiChatApiSettings {
   final String apiKey;
   final String systemPrompt;
   final double temperature;
+  final bool agentEnabled;
+  final bool webSearchEnabled;
+  final WebSearchProvider webSearchProvider;
+  final String webSearchApiKey;
+  final String webSearchBaseUrl;
 
   factory AiChatApiSettings.defaults() {
     return const AiChatApiSettings(
@@ -27,6 +39,11 @@ class AiChatApiSettings {
       apiKey: '',
       systemPrompt: '你是阅读助手。回答要准确、简洁；如果用户提供引用内容，优先基于引用回答，并明确不确定性。',
       temperature: 0.3,
+      agentEnabled: true,
+      webSearchEnabled: false,
+      webSearchProvider: WebSearchProvider.tavily,
+      webSearchApiKey: '',
+      webSearchBaseUrl: '',
     );
   }
 
@@ -37,6 +54,11 @@ class AiChatApiSettings {
     String? apiKey,
     String? systemPrompt,
     double? temperature,
+    bool? agentEnabled,
+    bool? webSearchEnabled,
+    WebSearchProvider? webSearchProvider,
+    String? webSearchApiKey,
+    String? webSearchBaseUrl,
   }) {
     return AiChatApiSettings(
       provider: provider ?? this.provider,
@@ -45,6 +67,11 @@ class AiChatApiSettings {
       apiKey: apiKey ?? this.apiKey,
       systemPrompt: systemPrompt ?? this.systemPrompt,
       temperature: temperature ?? this.temperature,
+      agentEnabled: agentEnabled ?? this.agentEnabled,
+      webSearchEnabled: webSearchEnabled ?? this.webSearchEnabled,
+      webSearchProvider: webSearchProvider ?? this.webSearchProvider,
+      webSearchApiKey: webSearchApiKey ?? this.webSearchApiKey,
+      webSearchBaseUrl: webSearchBaseUrl ?? this.webSearchBaseUrl,
     );
   }
 
@@ -116,6 +143,11 @@ class AiChatApiStore {
   static const _apiKeyKey = 'ai_chat_api_key';
   static const _systemPromptKey = 'ai_chat_system_prompt';
   static const _temperatureKey = 'ai_chat_temperature';
+  static const _agentEnabledKey = 'ai_chat_agent_enabled';
+  static const _webSearchEnabledKey = 'ai_chat_web_search_enabled';
+  static const _webSearchProviderKey = 'ai_chat_web_search_provider';
+  static const _webSearchApiKeyKey = 'ai_chat_web_search_api_key';
+  static const _webSearchBaseUrlKey = 'ai_chat_web_search_base_url';
 
   Future<AiChatApiSettings> load() async {
     final store = PersistentKvStore.instance;
@@ -127,6 +159,16 @@ class AiChatApiStore {
     );
     final defaults = AiChatApiSettings.defaults();
     final savedTemperature = await store.getDouble(_temperatureKey);
+    final savedSearchBaseUrl =
+        await store.getString(_webSearchBaseUrlKey) ??
+        defaults.webSearchBaseUrl;
+    final savedSearchProvider = await store.getString(_webSearchProviderKey);
+    final searchProvider = WebSearchProvider.values.firstWhere(
+      (item) => item.name == savedSearchProvider,
+      orElse: () => savedSearchBaseUrl.trim().isNotEmpty
+          ? WebSearchProvider.searxng
+          : defaults.webSearchProvider,
+    );
     return AiChatApiSettings(
       provider: provider,
       baseUrl: await store.getString(_baseUrlKey) ?? defaults.baseUrl,
@@ -135,6 +177,16 @@ class AiChatApiStore {
       systemPrompt:
           await store.getString(_systemPromptKey) ?? defaults.systemPrompt,
       temperature: (savedTemperature ?? defaults.temperature).clamp(0.0, 1.5),
+      agentEnabled:
+          await store.getBool(_agentEnabledKey) ?? defaults.agentEnabled,
+      webSearchEnabled:
+          await store.getBool(_webSearchEnabledKey) ??
+          defaults.webSearchEnabled,
+      webSearchProvider: searchProvider,
+      webSearchApiKey:
+          await store.getString(_webSearchApiKeyKey) ??
+          defaults.webSearchApiKey,
+      webSearchBaseUrl: savedSearchBaseUrl,
     );
   }
 
@@ -149,5 +201,13 @@ class AiChatApiStore {
       _temperatureKey,
       settings.temperature.clamp(0.0, 1.5),
     );
+    await store.setBool(_agentEnabledKey, settings.agentEnabled);
+    await store.setBool(_webSearchEnabledKey, settings.webSearchEnabled);
+    await store.setString(
+      _webSearchProviderKey,
+      settings.webSearchProvider.name,
+    );
+    await store.setString(_webSearchApiKeyKey, settings.webSearchApiKey);
+    await store.setString(_webSearchBaseUrlKey, settings.webSearchBaseUrl);
   }
 }
