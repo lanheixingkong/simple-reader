@@ -88,6 +88,12 @@ class AppStorage {
     final cloudCache = Directory(p.join(iCloudRoot.path, 'PdfTextCache'));
     final localKv = File(p.join(localDocsDir.path, 'kv_store.json'));
     final cloudKv = File(p.join(iCloudRoot.path, 'kv_store.json'));
+    final localReadingStats = File(
+      p.join(localDocsDir.path, 'reading_stats.json'),
+    );
+    final cloudReadingStats = File(
+      p.join(iCloudRoot.path, 'reading_stats.json'),
+    );
 
     final hasCloudLibrary =
         await cloudLibrary.exists() || await cloudBooks.exists();
@@ -107,6 +113,10 @@ class AppStorage {
     if (!await cloudKv.exists() && await localKv.exists()) {
       await cloudKv.parent.create(recursive: true);
       await localKv.copy(cloudKv.path);
+    }
+    if (!await cloudReadingStats.exists() && await localReadingStats.exists()) {
+      await cloudReadingStats.parent.create(recursive: true);
+      await localReadingStats.copy(cloudReadingStats.path);
     }
   }
 

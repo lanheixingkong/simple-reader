@@ -8,6 +8,7 @@ import '../models/library.dart';
 import '../services/cover_service.dart';
 import '../services/library_store.dart';
 import '../services/persistent_kv_store.dart';
+import 'reading_stats_screen.dart';
 import 'reader_screen.dart';
 
 class BookshelfScreen extends StatefulWidget {
@@ -353,6 +354,15 @@ class _BookshelfScreenState extends State<BookshelfScreen>
                   : '全选',
             ),
           ] else ...[
+            IconButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const ReadingStatsScreen(),
+                ),
+              ),
+              icon: const Icon(Icons.bar_chart_outlined),
+              tooltip: '阅读统计',
+            ),
             IconButton(
               onPressed: _showUsageGuide,
               icon: const Icon(Icons.help_outline),
