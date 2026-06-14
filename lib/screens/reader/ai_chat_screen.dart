@@ -10,6 +10,8 @@ import '../../services/ai_chat_api_store.dart';
 import '../../services/ai_chat_service.dart';
 import '../../services/ai_chat_store.dart';
 import 'ai_chat_api_settings_sheet.dart';
+import 'ai_chat_share_content.dart';
+import 'reader_share_sheet.dart';
 
 class AiChatScreen extends StatefulWidget {
   const AiChatScreen({super.key, required this.book, this.initialQuote});
@@ -265,11 +267,17 @@ class _AiChatScreenState extends State<AiChatScreen> {
           return _buildBubble(isUser: false, content: _streamingAssistantText);
         }
         final message = conversation.messages[index];
+        final question = message.role == AiChatRole.assistant
+            ? _questionBefore(conversation.messages, index)
+            : null;
         return _buildBubble(
           isUser: message.role == AiChatRole.user,
           content: message.content,
           quote: message.quote,
           citations: message.citations,
+          onShare: question == null
+              ? null
+              : () => _openAnswerShareSheet(question, message),
         );
       },
     );
@@ -280,6 +288,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     required String content,
     String? quote,
     List<AiChatCitation> citations = const [],
+    VoidCallback? onShare,
   }) {
     final bubbleColor = isUser
         ? const Color(0xFFE6F4FF)
@@ -368,8 +377,49 @@ class _AiChatScreenState extends State<AiChatScreen> {
                   ),
                 ),
             ],
+            if (!isUser && onShare != null) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  onPressed: onShare,
+                  icon: const Icon(Icons.ios_share, size: 18),
+                  tooltip: '生成图片分享',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ),
+            ],
           ],
         ),
+      ),
+    );
+  }
+
+  AiChatMessage? _questionBefore(
+    List<AiChatMessage> messages,
+    int answerIndex,
+  ) {
+    for (var i = answerIndex - 1; i >= 0; i--) {
+      if (messages[i].role == AiChatRole.user) return messages[i];
+    }
+    return null;
+  }
+
+  Future<void> _openAnswerShareSheet(
+    AiChatMessage question,
+    AiChatMessage answer,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => ReaderShareSheet(
+        title: widget.book.title,
+        author: 'AI 阅读助手',
+        text: buildAiChatShareText(question: question, answer: answer),
+        sourceLabel: '分享 AI 问答',
+        messenger: ScaffoldMessenger.of(this.context),
+        renderMarkdown: true,
       ),
     );
   }

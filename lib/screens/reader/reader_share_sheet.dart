@@ -17,6 +17,7 @@ class ReaderShareSheet extends StatefulWidget {
     required this.text,
     required this.sourceLabel,
     required this.messenger,
+    this.renderMarkdown = false,
   });
 
   final String title;
@@ -24,6 +25,7 @@ class ReaderShareSheet extends StatefulWidget {
   final String text;
   final String sourceLabel;
   final ScaffoldMessengerState messenger;
+  final bool renderMarkdown;
 
   @override
   State<ReaderShareSheet> createState() => _ReaderShareSheetState();
@@ -37,6 +39,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
   static const double _footerDividerSpacing = 8;
   static const double _footerTitleSpacing = 4;
   static const double _paragraphSpacing = 12;
+  static const double _tableCellPadding = 6;
 
   bool _busy = false;
   int _templateIndex = 0;
@@ -243,14 +246,19 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             for (var i = 0; i < paragraphs.length; i++) ...[
-              Text(
-                paragraphs[i],
-                style: TextStyle(
-                  fontSize: 16,
-                  height: 1.7,
-                  color: template.textColor,
+              if (_parseMarkdownTable(paragraphs[i]) case final table?)
+                _buildMarkdownTable(table, template)
+              else
+                Text.rich(
+                  _shareTextSpan(
+                    paragraphs[i],
+                    TextStyle(
+                      fontSize: 16,
+                      height: 1.7,
+                      color: template.textColor,
+                    ),
+                  ),
                 ),
-              ),
               if (i < paragraphs.length - 1)
                 const SizedBox(height: _paragraphSpacing),
             ],
@@ -454,11 +462,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
           80.0,
           maxCardHeight,
         );
-    final paragraphs = text
-        .split(RegExp(r'\n\s*\n'))
-        .map((item) => item.trim())
-        .where((item) => item.isNotEmpty)
-        .toList();
+    final paragraphs = _shareParagraphs(text);
     if (paragraphs.isEmpty) {
       return const [
         [''],
@@ -566,8 +570,12 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     double maxWidth,
     TextStyle style,
   ) {
+    final table = _parseMarkdownTable(text);
+    if (table != null) {
+      return _measureMarkdownTableHeight(table, maxWidth, style);
+    }
     final painter = TextPainter(
-      text: TextSpan(text: text, style: style),
+      text: _shareTextSpan(text, style),
       textDirection: TextDirection.ltr,
     )..layout(maxWidth: maxWidth);
     return painter.height;
@@ -643,14 +651,25 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     final textOffset = Offset(_cardHorizontalPadding, _cardVerticalPadding);
     var paragraphTop = textOffset.dy;
     for (var i = 0; i < paragraphs.length; i++) {
+      final table = _parseMarkdownTable(paragraphs[i]);
+      if (table != null) {
+        final height = _paintMarkdownTable(
+          canvas,
+          table,
+          Offset(_cardHorizontalPadding, paragraphTop),
+          textWidth,
+          template,
+        );
+        paragraphTop += height;
+        if (i < paragraphs.length - 1) {
+          paragraphTop += _paragraphSpacing;
+        }
+        continue;
+      }
       final textPainter = TextPainter(
-        text: TextSpan(
-          text: paragraphs[i],
-          style: TextStyle(
-            fontSize: 16,
-            height: 1.7,
-            color: template.textColor,
-          ),
+        text: _shareTextSpan(
+          paragraphs[i],
+          TextStyle(fontSize: 16, height: 1.7, color: template.textColor),
         ),
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: textWidth);
@@ -709,6 +728,366 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     );
     final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
     return byteData?.buffer.asUint8List();
+  }
+
+  List<String> _shareParagraphs(String text) {
+    if (!widget.renderMarkdown) {
+      return text
+          .split(RegExp(r'\n\s*\n'))
+          .map((item) => item.trim())
+          .where((item) => item.isNotEmpty)
+          .toList();
+    }
+    final paragraphs = <String>[];
+    final buffer = <String>[];
+    var inCodeBlock = false;
+    void flush() {
+      final value = buffer.join('\n').trim();
+      if (value.isNotEmpty) paragraphs.add(value);
+      buffer.clear();
+    }
+
+    final lines = text.split('\n');
+    var index = 0;
+    while (index < lines.length) {
+      final line = lines[index];
+      final trimmed = line.trim();
+      if (trimmed.startsWith('```')) {
+        inCodeBlock = !inCodeBlock;
+        buffer.add(line);
+        if (!inCodeBlock) flush();
+        index += 1;
+        continue;
+      }
+      if (!inCodeBlock &&
+          index + 1 < lines.length &&
+          _isMarkdownTableHeader(line, lines[index + 1])) {
+        flush();
+        final tableLines = <String>[line, lines[index + 1]];
+        index += 2;
+        while (index < lines.length && _isMarkdownTableRow(lines[index])) {
+          tableLines.add(lines[index]);
+          index += 1;
+        }
+        paragraphs.add(tableLines.join('\n'));
+        continue;
+      }
+      if (!inCodeBlock && trimmed.isEmpty) {
+        flush();
+        index += 1;
+        continue;
+      }
+      if (!inCodeBlock &&
+          RegExp(r'^#{1,6}\s+').hasMatch(trimmed) &&
+          buffer.isNotEmpty) {
+        flush();
+      }
+      buffer.add(line);
+      if (!inCodeBlock && RegExp(r'^#{1,6}\s+').hasMatch(trimmed)) {
+        flush();
+      }
+      index += 1;
+    }
+    flush();
+    return paragraphs;
+  }
+
+  bool _isMarkdownTableHeader(String header, String separator) {
+    final headerCells = _splitMarkdownTableRow(header);
+    final separatorCells = _splitMarkdownTableRow(separator);
+    return headerCells.length >= 2 &&
+        headerCells.length == separatorCells.length &&
+        separatorCells.every(
+          (cell) => RegExp(r'^:?-{3,}:?$').hasMatch(cell.trim()),
+        );
+  }
+
+  bool _isMarkdownTableRow(String line) {
+    return line.trim().contains('|') &&
+        _splitMarkdownTableRow(line).length >= 2;
+  }
+
+  List<String> _splitMarkdownTableRow(String line) {
+    var value = line.trim();
+    if (value.startsWith('|')) value = value.substring(1);
+    if (value.endsWith('|')) value = value.substring(0, value.length - 1);
+    return value.split('|').map((cell) => cell.trim()).toList();
+  }
+
+  _MarkdownTable? _parseMarkdownTable(String text) {
+    if (!widget.renderMarkdown) return null;
+    final lines = text.trim().split('\n');
+    if (lines.length < 2 || !_isMarkdownTableHeader(lines[0], lines[1])) {
+      return null;
+    }
+    final header = _splitMarkdownTableRow(lines[0]);
+    final rows = lines
+        .skip(2)
+        .where(_isMarkdownTableRow)
+        .map(_splitMarkdownTableRow)
+        .map(
+          (row) => List<String>.generate(
+            header.length,
+            (index) => index < row.length ? row[index] : '',
+          ),
+        )
+        .toList();
+    return _MarkdownTable(header: header, rows: rows);
+  }
+
+  Widget _buildMarkdownTable(_MarkdownTable table, _ShareTemplate template) {
+    final borderColor = template.accentColor.withValues(alpha: 0.7);
+    Widget row(List<String> cells, {required bool header}) {
+      return IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final cell in cells)
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(_tableCellPadding),
+                  decoration: BoxDecoration(
+                    color: header
+                        ? template.accentColor.withValues(alpha: 0.12)
+                        : null,
+                    border: Border(
+                      right: BorderSide(color: borderColor),
+                      bottom: BorderSide(color: borderColor),
+                    ),
+                  ),
+                  child: Text.rich(
+                    _inlineMarkdownSpan(
+                      cell,
+                      TextStyle(
+                        fontSize: 13,
+                        height: 1.4,
+                        color: template.textColor,
+                        fontWeight: header ? FontWeight.w700 : FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: borderColor),
+          top: BorderSide(color: borderColor),
+        ),
+      ),
+      child: Column(
+        children: [
+          row(table.header, header: true),
+          for (final cells in table.rows) row(cells, header: false),
+        ],
+      ),
+    );
+  }
+
+  double _measureMarkdownTableHeight(
+    _MarkdownTable table,
+    double maxWidth,
+    TextStyle baseStyle,
+  ) {
+    final columnWidth = maxWidth / table.header.length;
+    var height = 0.0;
+    for (var rowIndex = 0; rowIndex <= table.rows.length; rowIndex++) {
+      final cells = rowIndex == 0 ? table.header : table.rows[rowIndex - 1];
+      var rowHeight = 0.0;
+      for (final cell in cells) {
+        final painter = TextPainter(
+          text: _inlineMarkdownSpan(
+            cell,
+            baseStyle.copyWith(
+              fontSize: 13,
+              height: 1.4,
+              fontWeight: rowIndex == 0 ? FontWeight.w700 : FontWeight.w400,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: columnWidth - _tableCellPadding * 2);
+        rowHeight = rowHeight < painter.height ? painter.height : rowHeight;
+      }
+      height += rowHeight + _tableCellPadding * 2;
+    }
+    return height;
+  }
+
+  double _paintMarkdownTable(
+    Canvas canvas,
+    _MarkdownTable table,
+    Offset offset,
+    double width,
+    _ShareTemplate template,
+  ) {
+    final columnWidth = width / table.header.length;
+    final borderPaint = Paint()
+      ..color = template.accentColor.withValues(alpha: 0.7)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    final headerPaint = Paint()
+      ..color = template.accentColor.withValues(alpha: 0.12);
+    var top = offset.dy;
+    for (var rowIndex = 0; rowIndex <= table.rows.length; rowIndex++) {
+      final cells = rowIndex == 0 ? table.header : table.rows[rowIndex - 1];
+      final painters = <TextPainter>[];
+      var rowTextHeight = 0.0;
+      for (final cell in cells) {
+        final painter = TextPainter(
+          text: _inlineMarkdownSpan(
+            cell,
+            TextStyle(
+              fontSize: 13,
+              height: 1.4,
+              color: template.textColor,
+              fontWeight: rowIndex == 0 ? FontWeight.w700 : FontWeight.w400,
+            ),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout(maxWidth: columnWidth - _tableCellPadding * 2);
+        painters.add(painter);
+        rowTextHeight = rowTextHeight < painter.height
+            ? painter.height
+            : rowTextHeight;
+      }
+      final rowHeight = rowTextHeight + _tableCellPadding * 2;
+      for (var column = 0; column < cells.length; column++) {
+        final rect = Rect.fromLTWH(
+          offset.dx + column * columnWidth,
+          top,
+          columnWidth,
+          rowHeight,
+        );
+        if (rowIndex == 0) canvas.drawRect(rect, headerPaint);
+        canvas.drawRect(rect, borderPaint);
+        painters[column].paint(
+          canvas,
+          Offset(rect.left + _tableCellPadding, rect.top + _tableCellPadding),
+        );
+      }
+      top += rowHeight;
+    }
+    return top - offset.dy;
+  }
+
+  TextSpan _shareTextSpan(String text, TextStyle baseStyle) {
+    if (!widget.renderMarkdown) {
+      return TextSpan(text: text, style: baseStyle);
+    }
+    final trimmed = text.trim();
+    if (trimmed.startsWith('```') && trimmed.endsWith('```')) {
+      final lines = trimmed.split('\n');
+      final code = lines.length > 2
+          ? lines.sublist(1, lines.length - 1).join('\n')
+          : '';
+      return TextSpan(
+        text: code,
+        style: baseStyle.copyWith(
+          fontFamily: 'monospace',
+          fontSize: 13,
+          height: 1.55,
+          backgroundColor: baseStyle.color?.withValues(alpha: 0.08),
+        ),
+      );
+    }
+    final heading = RegExp(r'^(#{1,6})\s+').firstMatch(trimmed);
+    if (heading != null) {
+      final level = heading.group(1)!.length;
+      return _inlineMarkdownSpan(
+        trimmed.substring(heading.end),
+        baseStyle.copyWith(
+          fontSize: level <= 2 ? 21 : 18,
+          height: 1.4,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+    }
+    if (trimmed.startsWith('>')) {
+      final quote = trimmed
+          .split('\n')
+          .map((line) => line.replaceFirst(RegExp(r'^\s*>\s?'), ''))
+          .join('\n');
+      return _inlineMarkdownSpan(
+        '▌ $quote',
+        baseStyle.copyWith(
+          fontStyle: FontStyle.italic,
+          color: baseStyle.color?.withValues(alpha: 0.72),
+        ),
+      );
+    }
+    final normalized = trimmed
+        .split('\n')
+        .map((line) {
+          final bullet = RegExp(r'^\s*[-*+]\s+').firstMatch(line);
+          if (bullet != null) return '• ${line.substring(bullet.end)}';
+          return line;
+        })
+        .join('\n');
+    return _inlineMarkdownSpan(normalized, baseStyle);
+  }
+
+  TextSpan _inlineMarkdownSpan(String text, TextStyle baseStyle) {
+    final pattern = RegExp(
+      r'(\*\*[^*]+\*\*|__[^_]+__|`[^`]+`|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^)]+\))',
+    );
+    final children = <InlineSpan>[];
+    var offset = 0;
+    for (final match in pattern.allMatches(text)) {
+      if (match.start > offset) {
+        children.add(
+          TextSpan(text: text.substring(offset, match.start), style: baseStyle),
+        );
+      }
+      final token = match.group(0)!;
+      if ((token.startsWith('**') && token.endsWith('**')) ||
+          (token.startsWith('__') && token.endsWith('__'))) {
+        children.add(
+          TextSpan(
+            text: token.substring(2, token.length - 2),
+            style: baseStyle.copyWith(fontWeight: FontWeight.w700),
+          ),
+        );
+      } else if (token.startsWith('`') && token.endsWith('`')) {
+        children.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: baseStyle.copyWith(
+              fontFamily: 'monospace',
+              fontSize: (baseStyle.fontSize ?? 16) - 1,
+              backgroundColor: baseStyle.color?.withValues(alpha: 0.08),
+            ),
+          ),
+        );
+      } else if (token.startsWith('[')) {
+        final link = RegExp(r'^\[([^\]]+)\]\(([^)]+)\)$').firstMatch(token);
+        children.add(
+          TextSpan(
+            text: link == null ? token : '${link.group(1)}\n${link.group(2)}',
+            style: baseStyle.copyWith(
+              decoration: TextDecoration.underline,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        );
+      } else {
+        children.add(
+          TextSpan(
+            text: token.substring(1, token.length - 1),
+            style: baseStyle.copyWith(fontStyle: FontStyle.italic),
+          ),
+        );
+      }
+      offset = match.end;
+    }
+    if (offset < text.length) {
+      children.add(TextSpan(text: text.substring(offset), style: baseStyle));
+    }
+    return TextSpan(style: baseStyle, children: children);
   }
 
   void _showSnack(String message) {
@@ -784,6 +1163,13 @@ class _ShareTemplate {
   final Color background;
   final Color textColor;
   final Color accentColor;
+}
+
+class _MarkdownTable {
+  const _MarkdownTable({required this.header, required this.rows});
+
+  final List<String> header;
+  final List<List<String>> rows;
 }
 
 class _ShareActionButton extends StatelessWidget {
