@@ -13,6 +13,7 @@ import '../../services/book_translation_cache_store.dart';
 import '../../services/book_translation_service.dart';
 import '../../services/library_store.dart';
 import '../../services/persistent_kv_store.dart';
+import '../../services/reader_selection_share_formatter.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'ai_chat_screen.dart';
@@ -360,9 +361,9 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
             tooltip: 'AI问答',
           ),
           IconButton(
-            onPressed: _isCurrentChapterTranslating
+            onPressed: _isCurrentChapterTranslating && !_translationEnabled
                 ? null
-                : _translateCurrentChapter,
+                : _toggleTranslation,
             icon: _isCurrentChapterTranslating
                 ? const SizedBox(
                     width: 18,
@@ -372,7 +373,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
                 : Icon(
                     _translationEnabled ? Icons.translate : Icons.g_translate,
                   ),
-            tooltip: _translationEnabled ? '自动翻译已开启' : '开启自动翻译',
+            tooltip: _translationEnabled ? '关闭译文' : '显示译文',
           ),
         ],
         child: ReaderTapZones(
@@ -711,10 +712,6 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
   }
 
   String _shareTextForSelection(String text, int chapterIndex) {
-    final normalizedSelected = _normalizeCompactText(text);
-    if (normalizedSelected.isEmpty) {
-      return _normalizeShareText(text);
-    }
     if (chapterIndex < 0 || chapterIndex >= _chapters.length) {
       return _normalizeShareText(text);
     }
@@ -723,96 +720,21 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     if (blocks == null || blocks.isEmpty) {
       return _normalizeShareText(text);
     }
-    final paragraphs = <String>[];
-    final compactParagraphs = <String>[];
-    for (final block in blocks) {
-      final paragraph = block.text?.trim();
-      if (paragraph == null || paragraph.isEmpty) continue;
-      final normalizedParagraph = _normalizeCompactText(paragraph);
-      if (normalizedParagraph.isEmpty) continue;
-      paragraphs.add(paragraph);
-      compactParagraphs.add(normalizedParagraph);
-    }
-    if (paragraphs.isEmpty) {
-      return _normalizeShareText(text);
-    }
-    final joinedCompact = compactParagraphs.join();
-    final startOffset = joinedCompact.indexOf(normalizedSelected);
-    if (startOffset == -1) {
-      return _normalizeShareText(text);
-    }
-    final endOffset = startOffset + normalizedSelected.length;
-
-    var compactCursor = 0;
-    final selectedParagraphs = <String>[];
-    for (var i = 0; i < paragraphs.length; i++) {
-      final compact = compactParagraphs[i];
-      final paragraphStart = compactCursor;
-      final paragraphEnd = paragraphStart + compact.length;
-      compactCursor = paragraphEnd;
-
-      if (endOffset <= paragraphStart || startOffset >= paragraphEnd) {
-        continue;
-      }
-
-      final localStart = startOffset <= paragraphStart
-          ? 0
-          : startOffset - paragraphStart;
-      final localEnd = endOffset >= paragraphEnd
-          ? compact.length
-          : endOffset - paragraphStart;
-      final slice = _sliceParagraphByCompactOffsets(
-        paragraphs[i],
-        localStart,
-        localEnd,
-      );
-      if (slice.isNotEmpty) {
-        selectedParagraphs.add(slice);
-      }
-    }
-    if (selectedParagraphs.isNotEmpty) {
-      return selectedParagraphs.join('\n\n');
-    }
-    return _normalizeShareText(text);
+    return formatReaderSelectionForShare(
+      selectedText: text,
+      sourceParagraphs: blocks
+          .map((block) => block.text?.trim() ?? '')
+          .where((paragraph) => paragraph.isNotEmpty)
+          .toList(),
+      translations: _translations,
+      includeTranslations: _translationEnabled,
+    );
   }
 
   String _normalizeShareText(String text) {
     final paragraphs = _translationService.splitParagraphs(text);
     if (paragraphs.isEmpty) return text.trim();
     return paragraphs.join('\n\n').trim();
-  }
-
-  String _normalizeCompactText(String text) {
-    return text.replaceAll(RegExp(r'\s+'), '');
-  }
-
-  String _sliceParagraphByCompactOffsets(
-    String paragraph,
-    int compactStart,
-    int compactEnd,
-  ) {
-    if (compactStart >= compactEnd) return '';
-    var compactIndex = 0;
-    int? startIndex;
-    var endIndex = paragraph.length;
-
-    for (var i = 0; i < paragraph.length; i++) {
-      final char = paragraph[i];
-      if (RegExp(r'\s').hasMatch(char)) {
-        continue;
-      }
-      if (startIndex == null && compactIndex >= compactStart) {
-        startIndex = i;
-      }
-      compactIndex += 1;
-      if (compactIndex >= compactEnd) {
-        endIndex = i + 1;
-        break;
-      }
-    }
-
-    if (startIndex == null) return '';
-    return paragraph.substring(startIndex, endIndex).trim();
   }
 
   Future<void> _openShareSheet(
@@ -863,7 +785,7 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('$text\n', style: textStyle),
-        if (hasTranslation)
+        if (_translationEnabled && hasTranslation)
           Padding(
             padding: const EdgeInsets.only(top: 4),
             child: Text(
@@ -879,21 +801,28 @@ class _EpubReaderScreenState extends State<EpubReaderScreen>
     );
   }
 
-  Future<void> _translateCurrentChapter() async {
-    if (!_translationEnabled) {
-      _translationEnabled = true;
+  Future<void> _toggleTranslation() async {
+    if (_translationEnabled) {
+      _translationEnabled = false;
       unawaited(
         PersistentKvStore.instance.setBool(
           '$_translationModeKeyPrefix${widget.book.id}',
-          true,
+          false,
         ),
       );
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
+      return;
     }
+    _translationEnabled = true;
+    unawaited(
+      PersistentKvStore.instance.setBool(
+        '$_translationModeKeyPrefix${widget.book.id}',
+        true,
+      ),
+    );
+    if (mounted) setState(() {});
     try {
-      await _translateChapterIfNeeded(_currentChapter, forceRefresh: true);
+      await _translateChapterIfNeeded(_currentChapter, forceRefresh: false);
     } catch (error) {
       _showSnack('翻译失败：$error');
     }

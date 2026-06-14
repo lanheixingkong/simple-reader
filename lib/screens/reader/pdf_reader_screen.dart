@@ -233,7 +233,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
           tooltip: 'AI问答',
         ),
         IconButton(
-          onPressed: _isCurrentPageTranslating ? null : _translateCurrentPage,
+          onPressed: _isCurrentPageTranslating && !_translationEnabled
+              ? null
+              : _toggleTranslation,
           icon: _isCurrentPageTranslating
               ? const SizedBox(
                   width: 18,
@@ -241,7 +243,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : Icon(_translationEnabled ? Icons.translate : Icons.g_translate),
-          tooltip: _translationEnabled ? '自动翻译已开启' : '开启自动翻译',
+          tooltip: _translationEnabled ? '关闭译文' : '显示译文',
         ),
         IconButton(
           onPressed: _openPdfApiSettings,
@@ -824,7 +826,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(text, style: style),
-          if (hasTranslation)
+          if (_translationEnabled && hasTranslation)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
@@ -837,15 +839,19 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
     );
   }
 
-  Future<void> _translateCurrentPage() async {
+  Future<void> _toggleTranslation() async {
+    if (_translationEnabled) {
+      _translationEnabled = false;
+      unawaited(_persistTranslationMode(false));
+      if (mounted) setState(() {});
+      return;
+    }
     if (!_textMode) {
       _showSnack('PDF 仅在文本模式下支持翻译');
       return;
     }
-    if (!_translationEnabled) {
-      _translationEnabled = true;
-      unawaited(_persistTranslationMode(true));
-    }
+    _translationEnabled = true;
+    unawaited(_persistTranslationMode(true));
     if (mounted) {
       setState(() {});
     }

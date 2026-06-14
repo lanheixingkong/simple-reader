@@ -14,6 +14,7 @@ import '../../services/book_translation_cache_store.dart';
 import '../../services/book_translation_service.dart';
 import '../../services/library_store.dart';
 import '../../services/persistent_kv_store.dart';
+import '../../services/reader_selection_share_formatter.dart';
 import '../../services/settings_store.dart';
 import 'reader_layout.dart';
 import 'ai_chat_screen.dart';
@@ -332,7 +333,9 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
           tooltip: 'AI问答',
         ),
         IconButton(
-          onPressed: _translating ? null : _translateCurrentBook,
+          onPressed: _translating && !_translationEnabled
+              ? null
+              : _toggleTranslation,
           icon: _translating
               ? const SizedBox(
                   width: 18,
@@ -340,7 +343,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
               : Icon(_translationEnabled ? Icons.translate : Icons.g_translate),
-          tooltip: _translationEnabled ? '自动翻译已开启' : '开启自动翻译',
+          tooltip: _translationEnabled ? '关闭译文' : '显示译文',
         ),
       ],
       child: ReaderTapZones(
@@ -368,7 +371,12 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
                   ContextMenuButtonItem(
                     label: '分享',
                     onPressed: () {
-                      final text = _selectedText;
+                      final text = formatReaderSelectionForShare(
+                        selectedText: _selectedText,
+                        sourceParagraphs: _paragraphs,
+                        translations: _translations,
+                        includeTranslations: _translationEnabled,
+                      );
                       selectableRegionState.hideToolbar();
                       if (text.isEmpty) return;
                       _openShareSheet(text, sourceLabel: '已选文字');
@@ -403,7 +411,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
   }
 
   Widget _buildContent(ReaderSettings settings, Color foreground) {
-    if (!_hasAnyTranslation) {
+    if (!_translationEnabled || !_hasAnyTranslation) {
       _headingKeyCursor = 0;
       return MarkdownBody(
         data: _content,
@@ -455,7 +463,7 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(text, style: style),
-          if (hasTranslation)
+          if (_translationEnabled && hasTranslation)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
@@ -472,26 +480,33 @@ class _MarkdownReaderScreenState extends State<MarkdownReaderScreen>
     );
   }
 
-  Future<void> _translateCurrentBook() async {
+  Future<void> _toggleTranslation() async {
     if (_paragraphs.isEmpty) {
       _showSnack('当前内容没有可翻译的文字');
       return;
     }
-    if (!_translationEnabled) {
-      _translationEnabled = true;
+    if (_translationEnabled) {
+      _translationEnabled = false;
       unawaited(
         PersistentKvStore.instance.setBool(
           '$_translationModeKeyPrefix${widget.book.id}',
-          true,
+          false,
         ),
       );
-      if (mounted) {
-        setState(() {});
-      }
+      if (mounted) setState(() {});
+      return;
     }
+    _translationEnabled = true;
+    unawaited(
+      PersistentKvStore.instance.setBool(
+        '$_translationModeKeyPrefix${widget.book.id}',
+        true,
+      ),
+    );
+    if (mounted) setState(() {});
     try {
       await _translateMissingParagraphs(
-        forceRefresh: true,
+        forceRefresh: false,
         notifyIfChinese: true,
       );
     } catch (error) {
