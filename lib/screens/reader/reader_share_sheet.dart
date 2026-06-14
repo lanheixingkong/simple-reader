@@ -40,6 +40,11 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
   static const double _footerTitleSpacing = 4;
   static const double _paragraphSpacing = 12;
   static const double _tableCellPadding = 6;
+  static const double _bodyFontSize = 14;
+  static const double _footerTitleFontSize = 12;
+  static const double _footerAuthorFontSize = 11;
+  static const double _tableFontSize = 11;
+  static const double _codeBlockFontSize = 11;
 
   bool _busy = false;
   int _templateIndex = 0;
@@ -253,7 +258,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
                   _shareTextSpan(
                     paragraphs[i],
                     TextStyle(
-                      fontSize: 16,
+                      fontSize: _bodyFontSize,
                       height: 1.7,
                       color: template.textColor,
                     ),
@@ -271,7 +276,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
             Text(
               '《${widget.title}》',
               style: TextStyle(
-                fontSize: 14,
+                fontSize: _footerTitleFontSize,
                 fontWeight: FontWeight.w600,
                 color: template.textColor.withValues(alpha: 0.85),
               ),
@@ -280,7 +285,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
             Text(
               widget.author,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: _footerAuthorFontSize,
                 color: template.textColor.withValues(alpha: 0.7),
               ),
             ),
@@ -448,9 +453,12 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
         [''],
       ];
     }
-    const textStyle = TextStyle(fontSize: 16, height: 1.7);
-    const titleStyle = TextStyle(fontSize: 14, fontWeight: FontWeight.w600);
-    const authorStyle = TextStyle(fontSize: 13);
+    const textStyle = TextStyle(fontSize: _bodyFontSize, height: 1.7);
+    const titleStyle = TextStyle(
+      fontSize: _footerTitleFontSize,
+      fontWeight: FontWeight.w600,
+    );
+    const authorStyle = TextStyle(fontSize: _footerAuthorFontSize);
     final textWidth = cardWidth - _cardHorizontalPadding * 2;
     final footerHeight = _measureFooterHeight(
       textWidth,
@@ -612,16 +620,23 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
     final textHeight = _measureTextHeight(
       paragraphs,
       textWidth,
-      TextStyle(fontSize: 16, height: 1.7, color: template.textColor),
+      TextStyle(
+        fontSize: _bodyFontSize,
+        height: 1.7,
+        color: template.textColor,
+      ),
     );
     final footerHeight = _measureFooterHeight(
       textWidth,
       TextStyle(
-        fontSize: 14,
+        fontSize: _footerTitleFontSize,
         fontWeight: FontWeight.w600,
         color: template.textColor.withValues(alpha: 0.85),
       ),
-      TextStyle(fontSize: 13, color: template.textColor.withValues(alpha: 0.7)),
+      TextStyle(
+        fontSize: _footerAuthorFontSize,
+        color: template.textColor.withValues(alpha: 0.7),
+      ),
     );
     final targetHeight = _cardVerticalPadding * 2 + textHeight + footerHeight;
     return targetHeight.clamp(260.0, maxCardHeight);
@@ -669,7 +684,11 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       final textPainter = TextPainter(
         text: _shareTextSpan(
           paragraphs[i],
-          TextStyle(fontSize: 16, height: 1.7, color: template.textColor),
+          TextStyle(
+            fontSize: _bodyFontSize,
+            height: 1.7,
+            color: template.textColor,
+          ),
         ),
         textDirection: TextDirection.ltr,
       )..layout(maxWidth: textWidth);
@@ -692,7 +711,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       text: TextSpan(
         text: '《${widget.title}》',
         style: TextStyle(
-          fontSize: 14,
+          fontSize: _footerTitleFontSize,
           fontWeight: FontWeight.w600,
           color: template.textColor.withValues(alpha: 0.85),
         ),
@@ -703,7 +722,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       text: TextSpan(
         text: widget.author,
         style: TextStyle(
-          fontSize: 13,
+          fontSize: _footerAuthorFontSize,
           color: template.textColor.withValues(alpha: 0.7),
         ),
       ),
@@ -859,7 +878,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
                     _inlineMarkdownSpan(
                       cell,
                       TextStyle(
-                        fontSize: 13,
+                        fontSize: _tableFontSize,
                         height: 1.4,
                         color: template.textColor,
                         fontWeight: header ? FontWeight.w700 : FontWeight.w400,
@@ -904,7 +923,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
           text: _inlineMarkdownSpan(
             cell,
             baseStyle.copyWith(
-              fontSize: 13,
+              fontSize: _tableFontSize,
               height: 1.4,
               fontWeight: rowIndex == 0 ? FontWeight.w700 : FontWeight.w400,
             ),
@@ -942,7 +961,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
           text: _inlineMarkdownSpan(
             cell,
             TextStyle(
-              fontSize: 13,
+              fontSize: _tableFontSize,
               height: 1.4,
               color: template.textColor,
               fontWeight: rowIndex == 0 ? FontWeight.w700 : FontWeight.w400,
@@ -989,7 +1008,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
         text: code,
         style: baseStyle.copyWith(
           fontFamily: 'monospace',
-          fontSize: 13,
+          fontSize: _codeBlockFontSize,
           height: 1.55,
           backgroundColor: baseStyle.color?.withValues(alpha: 0.08),
         ),
@@ -1001,7 +1020,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
       return _inlineMarkdownSpan(
         trimmed.substring(heading.end),
         baseStyle.copyWith(
-          fontSize: level <= 2 ? 21 : 18,
+          fontSize: level <= 2 ? 19 : 16,
           height: 1.4,
           fontWeight: FontWeight.w700,
         ),
@@ -1058,7 +1077,7 @@ class _ReaderShareSheetState extends State<ReaderShareSheet> {
             text: token.substring(1, token.length - 1),
             style: baseStyle.copyWith(
               fontFamily: 'monospace',
-              fontSize: (baseStyle.fontSize ?? 16) - 1,
+              fontSize: (baseStyle.fontSize ?? _bodyFontSize) - 1,
               backgroundColor: baseStyle.color?.withValues(alpha: 0.08),
             ),
           ),
